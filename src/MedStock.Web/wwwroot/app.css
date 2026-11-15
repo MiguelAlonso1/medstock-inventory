@@ -83,7 +83,7 @@ img { max-width: 100%; }
 .activity-icon.tone-warning { color: var(--mud-palette-warning); background: color-mix(in srgb, var(--mud-palette-warning) 16%, transparent); }
 
 /* Tables */
-.lot-table table { min-width: 520px; }
+@media (min-width: 600px) { .lot-table table { min-width: 520px; } }
 .lot-drill { background: color-mix(in srgb, var(--mud-palette-primary) 5%, transparent); }
 .inv-grid .mud-table-container { overscroll-behavior: contain; }
 .mud-table-head .mud-table-cell { font-weight: 700; font-size: .75rem; letter-spacing: .04em; text-transform: uppercase; color: var(--mud-palette-text-secondary); }
@@ -136,3 +136,27 @@ img { max-width: 100%; }
 
 #blazor-error-ui { background: #7f1d1d; color: #fff; bottom: 0; display: none; left: 0; padding: .6rem 1.25rem; position: fixed; width: 100%; z-index: 2000; }
 #blazor-error-ui .reload { color: #fff; text-decoration: underline; margin-left: 12px; }
+
+/* Charts: MudBlazor draws SVG on a fixed 700x350 viewBox, so let it size by aspect ratio (no side margins) and
+   raise the in-SVG font size so axis labels stay readable once the SVG is scaled down. */
+.mud-chart > svg { height: auto !important; width: 100%; }
+.mud-chart svg text { font-size: 13px; }
+.chart-compact { display: none; }
+@media (max-width: 599px) {
+    .chart-wide { display: none; }
+    .chart-compact { display: block; }
+    .mud-chart svg text { font-size: 24px; }
+}
+
+/* Inventory grid, phone: one compact card per product (name, SKU, on-hand + status chips); label of the main cell hidden */
+@media (max-width: 599px) {
+    .inv-grid .inv-main::before { display: none !important; content: none !important; }
+    .inv-grid .inv-main { padding-top: 0; }
+    .inv-grid .mud-table-row { position: relative; padding: 4px 0; }
+    .inv-grid .mud-table-row > td:first-child:not(.mud-table-child-content) { position: absolute; top: 4px; right: 0; padding: 0; width: auto; border: 0; z-index: 1; }
+    .inv-grid .inv-main { padding-right: 48px !important; }
+    .inv-grid .mud-table-child-content { padding: 0 !important; width: 100%; box-sizing: border-box; }
+    .inv-grid .lot-drill { padding: 8px !important; }
+    .inv-grid .lot-drill .mud-table-container { overflow-x: auto; }
+}
+.inv-grid .mud-table-head .mud-table-cell, .inv-grid .num { white-space: nowrap; }

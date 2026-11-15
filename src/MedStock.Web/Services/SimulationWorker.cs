@@ -35,9 +35,10 @@ public sealed class SimulationWorker(IDbContextFactory<MedStockDb> factory, Orde
     public async Task TickAsync()
     {
         var roll = _rng.Next(100);
-        if (roll < 40) await NewOrderAsync();
-        else if (roll < 68) await AdvanceOrderAsync();
-        else if (roll < 80) await ReceivePoAsync();
+        // Order creation is balanced by fulfilment so open orders and daily inbound volume stay near the seeded baseline.
+        if (roll < 28) await NewOrderAsync();
+        else if (roll < 78) await AdvanceOrderAsync();
+        else if (roll < 82) await ReceivePoAsync();
         else if (roll < 88) await ReplenishAsync();
         else if (roll < 94) await TransferAsync();
         else if (roll < 97) await ExcursionAsync();

@@ -14,11 +14,11 @@
 
 <MudPaper Elevation="0" Class="panel pa-3 pa-md-4 mb-4">
     <MudGrid Spacing="2" Class="align-center">
-        <MudItem xs="12" md="4">
+        <MudItem xs="12" md="5">
             <MudTextField T="string" @bind-Value="_search" Placeholder="Search name, SKU or NDC" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" DebounceInterval="300"
                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search" OnDebounceIntervalElapsed="Reload" Clearable="true" aria-label="Search products" />
         </MudItem>
-        <MudItem xs="6" md="2">
+        <MudItem xs="6" md="3">
             <MudSelect T="int?" Value="_warehouseId" ValueChanged="OnWarehouse" Label="Location" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true">
                 @foreach (var w in _lookups?.Warehouses ?? [])
                 {
@@ -26,7 +26,7 @@
                 }
             </MudSelect>
         </MudItem>
-        <MudItem xs="6" md="3">
+        <MudItem xs="6" md="4">
             <MudSelect T="string" Value="_category" ValueChanged="OnCategory" Label="Category" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true">
                 @foreach (var c in _lookups?.Categories ?? [])
                 {
@@ -34,7 +34,7 @@
                 }
             </MudSelect>
         </MudItem>
-        <MudItem xs="12" md="3">
+        <MudItem xs="12">
             <div class="chip-row" role="group" aria-label="Quick filters">
                 <MudChip T="string" Size="Size.Medium" Variant="@(_filter == InventoryFilter.All ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" OnClick="() => SetFilter(InventoryFilter.All)">All</MudChip>
                 <MudChip T="string" Size="Size.Medium" Variant="@(_filter == InventoryFilter.LowStock ? Variant.Filled : Variant.Outlined)" Color="Color.Warning" OnClick="() => SetFilter(InventoryFilter.LowStock)" Icon="@Icons.Material.Rounded.TrendingDown">Low stock</MudChip>
@@ -50,31 +50,37 @@
                  FixedHeader="true" Height="calc(100vh - 360px)" Class="inv-grid" ReadOnly="true">
         <Columns>
             <HierarchyColumn T="InventoryRow" ButtonDisabledFunc="@(_ => false)" InitiallyExpandedFunc="@(_ => false)" />
-            <PropertyColumn Property="x => x.Name" Title="Product" CellStyle="min-width:240px">
+            <PropertyColumn Property="x => x.Name" Title="Product" CellStyle="min-width:240px" CellClass="inv-main">
                 <CellTemplate>
                     <div class="min-w-0">
-                        <MudText Typo="Typo.body2" Class="font-weight-semibold text-truncate">@context.Item.Name</MudText>
-                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Item.Sku &middot; NDC @context.Item.Ndc</MudText>
+                        <MudText Typo="Typo.body2" Class="font-weight-semibold">@context.Item.Name</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Item.Sku<span class="d-none d-md-inline"> &middot; NDC @context.Item.Ndc</span></MudText>
+                        <div class="d-flex d-sm-none flex-wrap align-center gap-1 mt-1">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Class="my-0 mx-0 num">@context.Item.OnHand.ToString("N0") on hand</MudChip>
+                            @if (context.Item.NextExpiry is { } me) { <Chips Expiry="@ExpiryClassifier.Classify(me, _today)" DaysLeft="@ExpiryClassifier.DaysToExpiry(me, _today)" /> }
+                            @if (context.Item.Low) { <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="my-0">Low</MudChip> }
+                            @if (context.Item.ColdChain) { <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined" Icon="@Icons.Material.Rounded.AcUnit" Class="my-0">Cold</MudChip> }
+                        </div>
                     </div>
                 </CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.Category" Title="Category" HeaderClass="d-none d-xl-table-cell" CellClass="d-none d-xl-table-cell" />
-            <PropertyColumn Property="x => x.OnHand" Title="On hand" Sortable="true">
+            <PropertyColumn Property="x => x.OnHand" Title="On hand" Sortable="true" HeaderClass="d-none d-sm-table-cell" CellClass="d-none d-sm-table-cell">
                 <CellTemplate>
                     <span class="num">@context.Item.OnHand.ToString("N0")</span>
                     @if (context.Item.Allocated > 0) { <MudText Typo="Typo.caption" Color="Color.Secondary" Class="ml-1">(@context.Item.Allocated reserved)</MudText> }
                 </CellTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.Min" Title="Min / Max" Sortable="false">
+            <PropertyColumn Property="x => x.Min" Title="Min / Max" Sortable="false" HeaderClass="d-none d-sm-table-cell" CellClass="d-none d-sm-table-cell">
                 <CellTemplate><span class="num">@context.Item.Min / @context.Item.Max</span></CellTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => x.UnitCost" Title="Unit cost" HeaderClass="d-none d-xl-table-cell" CellClass="d-none d-xl-table-cell">
                 <CellTemplate><span class="num">@context.Item.UnitCost.ToString("C2", Us)</span></CellTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.Value" Title="Value" Sortable="true">
+            <PropertyColumn Property="x => x.Value" Title="Value" Sortable="true" HeaderClass="d-none d-sm-table-cell" CellClass="d-none d-sm-table-cell">
                 <CellTemplate><span class="num">@context.Item.Value.ToString("C0", Us)</span></CellTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.NextExpiry" Title="Next expiry" Sortable="true">
+            <PropertyColumn Property="x => x.NextExpiry" Title="Next expiry" Sortable="true" HeaderClass="d-none d-sm-table-cell" CellClass="d-none d-sm-table-cell">
                 <CellTemplate>
                     @if (context.Item.NextExpiry is { } e)
                     {
@@ -83,7 +89,7 @@
                     else { <MudText Typo="Typo.caption" Color="Color.Secondary">no stock</MudText> }
                 </CellTemplate>
             </PropertyColumn>
-            <TemplateColumn Title="Flags" Sortable="false">
+            <TemplateColumn Title="Flags" Sortable="false" HeaderClass="d-none d-sm-table-cell" CellClass="d-none d-sm-table-cell">
                 <CellTemplate>
                     <div class="d-flex gap-1">
                         @if (context.Item.Low) { <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="my-0">Low</MudChip> }
@@ -98,14 +104,14 @@
                 @if (_lots.TryGetValue(context.Item.Id, out var lots))
                 {
                     <MudSimpleTable Dense="true" Hover="false" Class="lot-table">
-                        <thead><tr><th>Lot</th><th>Location</th><th>Expiry</th><th></th><th class="text-right">On hand</th><th class="text-right">Reserved</th></tr></thead>
+                        <thead><tr><th>Lot</th><th>Location</th><th class="d-none d-sm-table-cell">Expiry</th><th>Status</th><th class="text-right">On hand</th><th class="text-right d-none d-sm-table-cell">Reserved</th></tr></thead>
                         <tbody>
                         @foreach (var l in lots)
                         {
                             <tr>
-                                <td>@l.LotNumber</td><td>@l.Warehouse</td><td>@l.Expiry.ToString("yyyy-MM-dd")</td>
+                                <td>@l.LotNumber</td><td>@l.Warehouse</td><td class="d-none d-sm-table-cell">@l.Expiry.ToString("yyyy-MM-dd")</td>
                                 <td><Chips Expiry="l.Class" DaysLeft="l.DaysLeft" /></td>
-                                <td class="text-right">@l.OnHand</td><td class="text-right">@l.Allocated</td>
+                                <td class="text-right">@l.OnHand</td><td class="text-right d-none d-sm-table-cell">@l.Allocated</td>
                             </tr>
                         }
                         </tbody>

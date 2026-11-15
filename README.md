@@ -4,6 +4,16 @@ A healthcare-style **inventory and order management system** with real-time upda
 
 > Blazor Web App (Interactive Server) on .NET 11, MudBlazor, EF Core + SQLite, ASP.NET Core Identity, SignalR live updates. No JavaScript written by hand, no CDNs, no external libraries beyond MudBlazor.
 
+## Screenshots
+
+| Overview (dark, desktop) | Inventory (light, desktop) |
+| --- | --- |
+| ![Overview, dark, 1440px](docs/screenshots/overview-dark-1440.png) | ![Inventory, light, 1440px](docs/screenshots/inventory-light-1440.png) |
+
+| Product detail (dark, desktop) | Overview (dark, 390px phone) |
+| --- | --- |
+| ![Product detail, dark, 1440px](docs/screenshots/product-dark-1440.png) | ![Overview, dark, 390px](docs/screenshots/overview-dark-390.png) |
+
 ## Features
 
 - **Overview**: KPI tiles (inventory value, low-stock SKUs, lots expiring within 30/60/90 days, open POs, fill rate, open orders), MudChart charts (movements per day, stock value by location), top products, and a live activity feed.

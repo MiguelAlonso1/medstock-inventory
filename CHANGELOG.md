@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.1 - 2026-11-15
+
+Polish pass.
+
+- Charts: axis labels are readable at 390px (larger in-SVG font, fewer ticks, every third day label on phones); charts now size to their container, which removes the empty right margin on the movements chart.
+- Inventory grid on phones: compact card per product (name, SKU, on-hand, expiry and Low/Cold chips); the empty "Flags" row is gone. Desktop filters laid out on two clean rows, headers no longer wrap.
+- Lot tables fit 390px (expiry date and reserved columns hide on phones).
+- New order: validation error no longer appears on the reset line after a successful create.
+- Simulator rebalanced (fulfilment outpaces new orders, fewer PO receipts) so open orders and daily inbound volume stay realistic.
+- README screenshots added.
+
 ## 1.0.0 - 2026-11-15
 
 Initial release.

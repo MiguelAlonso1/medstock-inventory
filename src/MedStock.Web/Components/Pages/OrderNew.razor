@@ -124,6 +124,8 @@
                 _result = res.Value;
                 Snack.Add($"{res.Value!.Number} created", Severity.Success);
                 _lines.Clear(); _lines.Add(new());
+                StateHasChanged();
+                await Task.Yield();
                 await _form.ResetValidationAsync();
             }
             else _error = res.Error;

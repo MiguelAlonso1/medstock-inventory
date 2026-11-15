@@ -30,7 +30,8 @@ else
             <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
                 <MudText Typo="Typo.h6" Class="mb-1">Movements per day</MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2 d-block">Units received (inbound) and shipped (outbound), last 14 days</MudText>
-                <MudChart ChartType="ChartType.Line" ChartSeries="@_moveSeries" ChartLabels="@_moveLabels" Width="100%" Height="280px" ChartOptions="@_lineOpts" />
+                <div class="chart-wide"><MudChart ChartType="ChartType.Line" ChartSeries="@_moveSeries" ChartLabels="@_moveLabels" Width="100%" Height="auto" ChartOptions="@_lineOpts" /></div>
+                <div class="chart-compact"><MudChart ChartType="ChartType.Line" ChartSeries="@_moveSeries" ChartLabels="@_moveLabels" Width="100%" Height="auto" ChartOptions="@_lineOptsXs" /></div>
             </MudPaper>
         </MudItem>
         <MudItem xs="12" lg="4">
@@ -47,7 +48,8 @@ else
             <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
                 <MudText Typo="Typo.h6" Class="mb-1">Stock value by location</MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2 d-block">Thousands of USD on hand</MudText>
-                <MudChart ChartType="ChartType.Bar" ChartSeries="@_valueSeries" ChartLabels="@_valueLabels" Width="100%" Height="260px" ChartOptions="@_barOpts" />
+                <div class="chart-wide"><MudChart ChartType="ChartType.Bar" ChartSeries="@_valueSeries" ChartLabels="@_valueLabels" Width="100%" Height="auto" ChartOptions="@_barOpts" /></div>
+                <div class="chart-compact"><MudChart ChartType="ChartType.Bar" ChartSeries="@_valueSeries" ChartLabels="@_valueLabels" Width="100%" Height="auto" ChartOptions="@_barOptsXs" /></div>
             </MudPaper>
         </MudItem>
         <MudItem xs="12" md="6">
@@ -79,8 +81,10 @@ else
     private IReadOnlyList<LabelValue> _top = [];
     private double _topMax;
 
-    private readonly LineChartOptions _lineOpts = new() { ChartPalette = ["#22D3EE", "#6366F1"], YAxisTicks = 1000 };
-    private readonly BarChartOptions _barOpts = new() { ChartPalette = ["#6366F1"], YAxisTicks = 250 };
+    private readonly LineChartOptions _lineOpts = new() { ChartPalette = ["#22D3EE", "#6366F1"], YAxisTicks = 1000, MaxNumYAxisTicks = 8, XAxisLabelInterval = 1 };
+    private readonly LineChartOptions _lineOptsXs = new() { ChartPalette = ["#22D3EE", "#6366F1"], YAxisTicks = 1000, MaxNumYAxisTicks = 4, XAxisLabelInterval = 3 };
+    private readonly BarChartOptions _barOpts = new() { ChartPalette = ["#6366F1"], YAxisTicks = 250, MaxNumYAxisTicks = 6 };
+    private readonly BarChartOptions _barOptsXs = new() { ChartPalette = ["#6366F1"], YAxisTicks = 250, MaxNumYAxisTicks = 4 };
 
     protected override Topic Topics => Topic.Stock | Topic.Orders | Topic.Purchasing;
 
