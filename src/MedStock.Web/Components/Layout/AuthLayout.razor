@@ -1,0 +1,11 @@
+@inherits LayoutComponentBase
+
+<MudThemeProvider Theme="AppTheme.Theme" IsDarkMode="@(ThemeMode != "light")" />
+<MudPopoverProvider />
+<main id="main" class="auth-shell">
+    @Body
+</main>
+
+@code {
+    [CascadingParameter(Name = "ThemeMode")] private string? ThemeMode { get; set; }
+}

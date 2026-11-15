@@ -1,0 +1,106 @@
+@page "/orders/{Id:int}"
+@attribute [Authorize]
+@inherits LiveComponentBase
+@inject OrderService OrderSvc
+@inject ISnackbar Snack
+
+<PageTitle>@(_o?.Number ?? "Order") - MedStock</PageTitle>
+
+@if (_missing)
+{
+    <MudAlert Severity="Severity.Warning">Order not found. <MudLink Href="/orders">Back to orders</MudLink></MudAlert>
+}
+else if (_o is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    <MudBreadcrumbs Items="_crumbs" Class="px-0 pt-0" />
+    <div class="page-head">
+        <div>
+            <MudText Typo="Typo.h3" Class="mb-1">@_o.Number</MudText>
+            <MudText Color="Color.Secondary">@_o.Customer &middot; fulfilled from @_o.Warehouse &middot; created @_o.CreatedUtc.ToLocalTime().ToString("MMM d HH:mm")</MudText>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            @if (CanFulfill && OrderWorkflow.Next(_o.Status) is { } next)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Advance" StartIcon="@(next == OrderStatus.Picking ? Icons.Material.Rounded.Checklist : Icons.Material.Rounded.LocalShipping)">@(next == OrderStatus.Picking ? "Start picking" : "Mark shipped")</MudButton>
+            }
+            @if (CanManage && _o.HasShortfall && _o.Status is OrderStatus.Pending or OrderStatus.Allocated)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="Reallocate" StartIcon="@Icons.Material.Rounded.Refresh">Retry allocation</MudButton>
+            }
+            @if (CanManage && OrderWorkflow.IsOpen(_o.Status))
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="Cancel" StartIcon="@Icons.Material.Rounded.Close">Cancel order</MudButton>
+            }
+        </div>
+    </div>
+
+    <MudPaper Elevation="0" Class="panel pa-4 mb-3">
+        <div class="status-flow" role="list" aria-label="Order progress">
+            @foreach (var s in Flow)
+            {
+                var state = _o.Status == OrderStatus.Cancelled ? "off" : s < _o.Status ? "done" : s == _o.Status ? "now" : "todo";
+                <div class="@($"flow-step {state}")" role="listitem"><span class="flow-dot">@(state == "done" ? "✓" : (int)s + 1)</span><span>@s</span></div>
+            }
+            @if (_o.Status == OrderStatus.Cancelled) { <MudChip T="string" Color="Color.Default" Variant="Variant.Outlined">Cancelled</MudChip> }
+        </div>
+    </MudPaper>
+
+    <MudPaper Elevation="0" Class="panel pa-4">
+        <MudText Typo="Typo.h6" Class="mb-3">Lines and FEFO allocation</MudText>
+        @foreach (var l in _o.Lines)
+        {
+            <div class="mb-4">
+                <div class="d-flex justify-space-between flex-wrap">
+                    <MudText Typo="Typo.body1" Class="font-weight-semibold">@l.Name <span class="text-secondary-soft">@l.Sku</span></MudText>
+                    <MudText Typo="Typo.body2"><span class="num">@l.Allocated</span> / @l.Ordered allocated@(l.Shipped > 0 ? $", {l.Shipped} shipped" : "")</MudText>
+                </div>
+                <MudProgressLinear Value="@(l.Ordered == 0 ? 0 : 100.0 * l.Allocated / l.Ordered)" Color="@(l.Allocated < l.Ordered ? Color.Warning : Color.Success)" Size="Size.Small" Rounded="true" Class="my-2" aria-label="@($"{l.Name} allocation")" />
+                @foreach (var a in l.Lots)
+                {
+                    <div class="d-flex justify-space-between alloc-row"><span>Lot @a.LotNumber &middot; exp @a.Expiry.ToString("yyyy-MM-dd")</span><span class="num">@a.Quantity</span></div>
+                }
+            </div>
+        }
+    </MudPaper>
+}
+
+@code {
+    private static readonly OrderStatus[] Flow = [OrderStatus.Pending, OrderStatus.Allocated, OrderStatus.Picking, OrderStatus.Shipped];
+    [Parameter] public int Id { get; set; }
+    private OrderResult? _o;
+    private bool _missing;
+    private readonly List<BreadcrumbItem> _crumbs = [new("Orders", "/orders"), new("Order", null, true)];
+
+    protected override Topic Topics => Topic.Orders;
+
+    protected override async Task LoadAsync()
+    {
+        _o = await OrderSvc.GetAsync(Id);
+        _missing = _o is null;
+    }
+
+    private async Task Advance()
+    {
+        var r = await OrderSvc.AdvanceAsync(Id, Actor);
+        Snack.Add(r.Ok ? $"Order is now {r.Value!.Status}" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
+        await LoadAsync();
+    }
+
+    private async Task Reallocate()
+    {
+        var r = await OrderSvc.ReallocateAsync(Id, Actor);
+        Snack.Add(r.Ok ? "Allocation updated" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
+        await LoadAsync();
+    }
+
+    private async Task Cancel()
+    {
+        var r = await OrderSvc.CancelAsync(Id, Actor);
+        Snack.Add(r.Ok ? "Order cancelled, stock released" : r.Error!, r.Ok ? Severity.Info : Severity.Error);
+        await LoadAsync();
+    }
+}

@@ -1,0 +1,99 @@
+@page "/alerts"
+@attribute [Authorize]
+@inherits LiveComponentBase
+@inject InventoryQueries Queries
+@inject ISnackbar Snack
+
+<PageTitle>Alerts - MedStock</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Alerts</MudText>
+        <MudText Color="Color.Secondary">Low stock, expiring lots and cold-chain excursions. Updates as stock moves.</MudText>
+    </div>
+</div>
+
+<MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" TabPanelsClass="pt-4" Class="panel-tabs">
+    <MudTabPanel Text="@($"Low stock ({_low.Count})")" Icon="@Icons.Material.Rounded.TrendingDown">
+        <MudPaper Elevation="0" Class="panel">
+            <MudTable Items="_low" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" FixedHeader="true" Height="calc(100vh - 360px)" Elevation="0" RowsPerPage="25">
+                <HeaderContent><MudTh>Product</MudTh><MudTh>Available</MudTh><MudTh>Minimum</MudTh><MudTh>On order</MudTh><MudTh>Level</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Product"><MudLink Href="@($"/inventory/{context.ProductId}")">@context.Name</MudLink> <span class="text-secondary-soft">@context.Sku</span></MudTd>
+                    <MudTd DataLabel="Available"><span class="num">@context.Available</span></MudTd>
+                    <MudTd DataLabel="Minimum"><span class="num">@context.Min</span></MudTd>
+                    <MudTd DataLabel="On order"><span class="num">@context.OnOrder</span></MudTd>
+                    <MudTd DataLabel="Level" Style="min-width:140px"><MudProgressLinear Value="@Math.Min(100, 100.0 * Math.Max(0, context.Available) / Math.Max(1, context.Min))" Color="@(context.Available <= 0 ? Color.Error : Color.Warning)" Rounded="true" aria-label="@($"{context.Name} stock level")" /></MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager PageSizeOptions="@(new[] { 25, 50 })" /></PagerContent>
+                <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">No low-stock SKUs.</MudText></NoRecordsContent>
+            </MudTable>
+        </MudPaper>
+    </MudTabPanel>
+    <MudTabPanel Text="@($"Expiring ({_exp.Count})")" Icon="@Icons.Material.Rounded.EventBusy">
+        <MudPaper Elevation="0" Class="panel">
+            <MudTable Items="_exp" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" FixedHeader="true" Height="calc(100vh - 360px)" Elevation="0" RowsPerPage="25">
+                <HeaderContent><MudTh>Product</MudTh><MudTh>Lot</MudTh><MudTh>Location</MudTh><MudTh>Expiry</MudTh><MudTh></MudTh><MudTh>Units</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Product"><MudLink Href="@($"/inventory/{context.ProductId}")">@context.Name</MudLink></MudTd>
+                    <MudTd DataLabel="Lot">@context.LotNumber</MudTd>
+                    <MudTd DataLabel="Location">@context.Warehouse</MudTd>
+                    <MudTd DataLabel="Expiry">@context.Expiry.ToString("yyyy-MM-dd")</MudTd>
+                    <MudTd><Chips Expiry="context.Class" DaysLeft="context.DaysLeft" /></MudTd>
+                    <MudTd DataLabel="Units"><span class="num">@context.Quantity</span></MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager PageSizeOptions="@(new[] { 25, 50 })" /></PagerContent>
+                <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">Nothing expires within 90 days.</MudText></NoRecordsContent>
+            </MudTable>
+        </MudPaper>
+    </MudTabPanel>
+    <MudTabPanel Text="@($"Cold chain ({_cold.Count(c => c.AcknowledgedUtc is null)} open)")" Icon="@Icons.Material.Rounded.AcUnit">
+        <MudPaper Elevation="0" Class="panel pa-3">
+            @foreach (var x in _cold)
+            {
+                <MudAlert Severity="@(x.AcknowledgedUtc is null ? Severity.Error : Severity.Normal)" Variant="Variant.Outlined" Class="mb-2" @key="x.Id">
+                    <div class="d-flex flex-wrap align-center gap-3 w-100">
+                        <div class="flex-grow-1">
+                            <MudText Typo="Typo.subtitle2">@x.Warehouse &middot; @x.Zone: @x.ReadingC.ToString("0.0") &deg;C</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Recorded @x.RecordedUtc.ToLocalTime().ToString("MMM d HH:mm") (range 2 to 8 &deg;C for refrigerated, below -10 &deg;C for frozen)</MudText>
+                        </div>
+                        @if (x.AcknowledgedUtc is null)
+                        {
+                            @if (CanManage) { <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Error" OnClick="() => Ack(x.Id)">Acknowledge</MudButton> }
+                            else { <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">Open</MudChip> }
+                        }
+                        else { <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Acknowledged by @x.AcknowledgedBy</MudChip> }
+                    </div>
+                </MudAlert>
+            }
+            @if (_cold.Count == 0) { <MudText Class="pa-6" Color="Color.Secondary">No excursions recorded.</MudText> }
+            <MudText Typo="Typo.subtitle1" Class="mt-5 mb-2 px-1">Cold-chain lots expiring within 90 days</MudText>
+            @foreach (var e in _exp.Where(x => x.ColdChain).Take(8))
+            {
+                <div class="d-flex justify-space-between align-center alloc-row px-1"><span>@e.Name &middot; lot @e.LotNumber &middot; @e.Warehouse</span><Chips Expiry="e.Class" DaysLeft="e.DaysLeft" /></div>
+            }
+        </MudPaper>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    private IReadOnlyList<LowStockAlert> _low = [];
+    private IReadOnlyList<ExpiryAlert> _exp = [];
+    private IReadOnlyList<ExcursionRow> _cold = [];
+
+    protected override Topic Topics => Topic.Alerts;
+
+    protected override async Task LoadAsync()
+    {
+        _low = await Queries.GetLowStockAsync();
+        _exp = await Queries.GetExpiryAlertsAsync();
+        _cold = await Queries.GetExcursionsAsync();
+    }
+
+    private async Task Ack(int id)
+    {
+        var r = await Queries.AcknowledgeExcursionAsync(id, Actor);
+        Snack.Add(r.Ok ? "Excursion acknowledged" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
+        await LoadAsync();
+    }
+}

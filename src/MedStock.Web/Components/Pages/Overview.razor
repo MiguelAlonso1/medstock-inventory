@@ -1,0 +1,103 @@
+@page "/"
+@attribute [Authorize]
+@inherits LiveComponentBase
+@inject InventoryQueries Queries
+
+<PageTitle>Overview - MedStock</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Overview</MudText>
+        <MudText Color="Color.Secondary">Network-wide inventory health across four distribution centers.</MudText>
+    </div>
+</div>
+
+@if (_k is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    <MudGrid Spacing="3">
+        <MudItem xs="6" md="4" lg="2"><KpiTile Label="Inventory value" Value="@_k.InventoryValue.ToString("C0", Us)" Hint="@($"{_k.TotalUnits:N0} units, {_k.SkuCount} SKUs")" Icon="@Icons.Material.Rounded.Payments" Tone="primary" /></MudItem>
+        <MudItem xs="6" md="4" lg="2"><KpiTile Label="Low-stock SKUs" Value="@_k.LowStockSkus.ToString()" Hint="at or below minimum" Icon="@Icons.Material.Rounded.TrendingDown" Tone="@(_k.LowStockSkus > 0 ? "warning" : "success")" /></MudItem>
+        <MudItem xs="6" md="4" lg="2"><KpiTile Label="Expiring lots 30/60/90d" Compact="true" Value="@($"{_k.Expiring30} / {_k.Expiring60} / {_k.Expiring90}")" Hint="@($"{_k.ExpiredLots} expired lots on hand")" Icon="@Icons.Material.Rounded.EventBusy" Tone="@(_k.Expiring30 > 0 ? "error" : "cyan")" /></MudItem>
+        <MudItem xs="6" md="4" lg="2"><KpiTile Label="Open purchase orders" Value="@_k.OpenPurchaseOrders.ToString()" Hint="awaiting receipt" Icon="@Icons.Material.Rounded.ShoppingCart" Tone="cyan" /></MudItem>
+        <MudItem xs="6" md="4" lg="2"><KpiTile Label="Fill rate (30 d)" Value="@($"{_k.FillRatePct:0.0}%")" Hint="units allocated vs ordered" Icon="@Icons.Material.Rounded.TaskAlt" Tone="@(_k.FillRatePct >= 97 ? "success" : "warning")" /></MudItem>
+        <MudItem xs="6" md="4" lg="2"><KpiTile Label="Open orders" Value="@_k.OpenOrders.ToString()" Hint="@(_k.OpenExcursions > 0 ? $"{_k.OpenExcursions} cold-chain alert(s)" : "no cold-chain alerts")" Icon="@Icons.Material.Rounded.LocalShipping" Tone="@(_k.OpenExcursions > 0 ? "error" : "primary")" /></MudItem>
+
+        <MudItem xs="12" lg="8">
+            <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
+                <MudText Typo="Typo.h6" Class="mb-1">Movements per day</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2 d-block">Units received (inbound) and shipped (outbound), last 14 days</MudText>
+                <MudChart ChartType="ChartType.Line" ChartSeries="@_moveSeries" ChartLabels="@_moveLabels" Width="100%" Height="280px" ChartOptions="@_lineOpts" />
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" lg="4">
+            <MudPaper Elevation="0" Class="panel pa-4 pa-md-5 feed-panel">
+                <div class="d-flex align-center justify-space-between mb-2">
+                    <MudText Typo="Typo.h6">Live activity</MudText>
+                    <MudButton Href="/activity" Size="Size.Small" Variant="Variant.Text">View all</MudButton>
+                </div>
+                <ActivityFeed MaxItems="6" />
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
+                <MudText Typo="Typo.h6" Class="mb-1">Stock value by location</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2 d-block">Thousands of USD on hand</MudText>
+                <MudChart ChartType="ChartType.Bar" ChartSeries="@_valueSeries" ChartLabels="@_valueLabels" Width="100%" Height="260px" ChartOptions="@_barOpts" />
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
+                <MudText Typo="Typo.h6" Class="mb-1">Top products by units shipped</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-3 d-block">Last 30 days</MudText>
+                @foreach (var t in _top)
+                {
+                    <div class="top-row">
+                        <div class="d-flex justify-space-between mb-1">
+                            <MudText Typo="Typo.body2" Class="text-truncate pr-3">@t.Label</MudText>
+                            <MudText Typo="Typo.body2" Class="font-weight-bold">@t.Value.ToString("N0")</MudText>
+                        </div>
+                        <MudProgressLinear Value="@(_topMax == 0 ? 0 : t.Value / _topMax * 100)" Color="Color.Secondary" Size="Size.Small" Rounded="true" aria-label="@t.Label" />
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private static readonly CultureInfo Us = CultureInfo.GetCultureInfo("en-US");
+    private Kpis? _k;
+    private List<ChartSeries<double>> _moveSeries = [];
+    private string[] _moveLabels = [];
+    private List<ChartSeries<double>> _valueSeries = [];
+    private string[] _valueLabels = [];
+    private IReadOnlyList<LabelValue> _top = [];
+    private double _topMax;
+
+    private readonly LineChartOptions _lineOpts = new() { ChartPalette = ["#22D3EE", "#6366F1"], YAxisTicks = 1000 };
+    private readonly BarChartOptions _barOpts = new() { ChartPalette = ["#6366F1"], YAxisTicks = 250 };
+
+    protected override Topic Topics => Topic.Stock | Topic.Orders | Topic.Purchasing;
+
+    protected override async Task LoadAsync()
+    {
+        _k = await Queries.GetKpisAsync();
+        var moves = await Queries.MovementsPerDayAsync(14);
+        _moveLabels = moves.Select(m => m.Day.ToString("MMM d", CultureInfo.InvariantCulture)).ToArray();
+        _moveSeries =
+        [
+            new ChartSeries<double> { Name = "Inbound", Data = moves.Select(m => (double)m.Inbound).ToArray() },
+            new ChartSeries<double> { Name = "Outbound", Data = moves.Select(m => (double)m.Outbound).ToArray() }
+        ];
+        var val = await Queries.ValueByWarehouseAsync();
+        _valueLabels = val.Select(v => v.Label).ToArray();
+        _valueSeries = [new ChartSeries<double> { Name = "Value ($k)", Data = val.Select(v => Math.Round(v.Value / 1000, 0)).ToArray() }];
+        _top = await Queries.TopProductsAsync(6);
+        _topMax = _top.Count == 0 ? 0 : _top.Max(t => t.Value);
+    }
+}

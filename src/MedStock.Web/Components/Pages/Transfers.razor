@@ -1,0 +1,101 @@
+@page "/transfers"
+@attribute [Authorize]
+@inherits LiveComponentBase
+@inject InventoryQueries Queries
+@inject TransferService TransferSvc
+@inject ISnackbar Snack
+
+<PageTitle>Transfers - MedStock</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Transfers</MudText>
+        <MudText Color="Color.Secondary">Move a lot between distribution centers. Reserved stock cannot move; cold-chain products only go to cold-chain locations.</MudText>
+    </div>
+</div>
+
+<MudGrid Spacing="3">
+    @if (CanManage)
+    {
+        <MudItem xs="12" lg="5">
+            <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
+                <MudForm @ref="_form" @bind-IsValid="_valid" Spacing="2">
+                    <MudAutocomplete T="ProductOption" Value="_product" ValueChanged="OnProduct" SearchFunc="Search" ToStringFunc="@(p => p?.ToString())" Label="Product"
+                                     Variant="Variant.Outlined" Required="true" RequiredError="Choose a product" MaxItems="25" DebounceInterval="200" ResetValueOnEmptyText="true" />
+                    <MudSelect T="int?" Value="_from" ValueChanged="OnFrom" Label="From" Variant="Variant.Outlined" Required="true" Validation="@((Func<int?, string?>)(v => v is null ? "Choose a source" : null))">
+                        @foreach (var w in _lookups?.Warehouses ?? []) { <MudSelectItem T="int?" Value="@((int?)w.Id)">@w.Code &middot; @w.Name</MudSelectItem> }
+                    </MudSelect>
+                    <MudSelect T="int?" @bind-Value="_lotId" Label="Lot (earliest expiry first)" Variant="Variant.Outlined" Required="true" Validation="@((Func<int?, string?>)(v => v is null ? "Choose a lot" : null))">
+                        @foreach (var l in _lots) { <MudSelectItem T="int?" Value="@((int?)l.LotId)">@l.LotNumber &middot; exp @l.Expiry.ToString("yyyy-MM-dd") &middot; @l.Available available</MudSelectItem> }
+                    </MudSelect>
+                    <MudSelect T="int?" @bind-Value="_to" Label="To" Variant="Variant.Outlined" Required="true" Validation="@((Func<int?, string?>)(v => v is null ? "Choose a destination" : v == _from ? "Must differ from the source" : null))">
+                        @foreach (var w in _lookups?.Warehouses ?? []) { <MudSelectItem T="int?" Value="@((int?)w.Id)">@w.Code &middot; @w.Name@(w.ColdChainCapable ? " (cold chain)" : "")</MudSelectItem> }
+                    </MudSelect>
+                    <MudNumericField T="int" @bind-Value="_qty" Label="Quantity" Variant="Variant.Outlined" Min="1"
+                                     Validation="@((Func<int, string?>)(v => v < 1 ? "Quantity must be at least 1" : _lots.FirstOrDefault(l => l.LotId == (_lotId ?? 0)) is { } l && v > l.Available ? $"Only {l.Available} available" : null))" />
+                </MudForm>
+                @if (_error is not null) { <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@_error</MudAlert> }
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4" OnClick="Submit" Disabled="_busy" StartIcon="@Icons.Material.Rounded.SwapHoriz">Transfer stock</MudButton>
+            </MudPaper>
+        </MudItem>
+    }
+    <MudItem xs="12" lg="@(CanManage ? 7 : 12)">
+        <MudPaper Elevation="0" Class="panel">
+            <MudTable Items="_recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="0">
+                <ToolBarContent><MudText Typo="Typo.h6">Recent transfers</MudText></ToolBarContent>
+                <HeaderContent><MudTh>Transfer</MudTh><MudTh>Product</MudTh><MudTh>Lot</MudTh><MudTh>Route</MudTh><MudTh>Qty</MudTh><MudTh>When</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Transfer">@context.Number</MudTd>
+                    <MudTd DataLabel="Product">@context.Product</MudTd>
+                    <MudTd DataLabel="Lot">@context.LotNumber</MudTd>
+                    <MudTd DataLabel="Route">@context.From &rarr; @context.To</MudTd>
+                    <MudTd DataLabel="Qty"><span class="num">@context.Quantity</span></MudTd>
+                    <MudTd DataLabel="When">@context.CreatedUtc.ToLocalTime().ToString("MMM d HH:mm")</MudTd>
+                </RowTemplate>
+                <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">No transfers yet.</MudText></NoRecordsContent>
+            </MudTable>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private MudForm _form = default!;
+    private bool _valid, _busy;
+    private string? _error;
+    private Lookups? _lookups;
+    private ProductOption? _product;
+    private int? _from, _to, _lotId;
+    private int _qty = 1;
+    private IReadOnlyList<TransferableLot> _lots = [];
+    private IReadOnlyList<TransferRow> _recent = [];
+
+    protected override Topic Topics => Topic.Stock;
+
+    protected override async Task LoadAsync()
+    {
+        _lookups ??= await Queries.GetLookupsAsync();
+        _recent = await TransferSvc.RecentAsync();
+        if (_product is not null && _from is not null) _lots = await TransferSvc.GetLotsAsync(_product.Id, _from.Value);
+    }
+
+    private async Task<IEnumerable<ProductOption>> Search(string? term, CancellationToken ct) => await Queries.SearchProductsAsync(term);
+
+    private async Task OnProduct(ProductOption? p) { _product = p; _lotId = null; await RefreshLots(); }
+    private async Task OnFrom(int? id) { _from = id; _lotId = null; await RefreshLots(); }
+    private async Task RefreshLots() => _lots = _product is null || _from is null ? [] : await TransferSvc.GetLotsAsync(_product.Id, _from.Value);
+
+    private async Task Submit()
+    {
+        _error = null;
+        await _form.ValidateAsync();
+        if (!_valid || _product is null) return;
+        _busy = true;
+        try
+        {
+            var r = await TransferSvc.TransferAsync(_product.Id, _lotId ?? 0, _from ?? 0, _to ?? 0, _qty, Actor);
+            if (r.Ok) { Snack.Add($"{r.Value} completed", Severity.Success); _lotId = null; _qty = 1; await RefreshLots(); await _form.ResetValidationAsync(); }
+            else _error = r.Error;
+        }
+        finally { _busy = false; }
+    }
+}

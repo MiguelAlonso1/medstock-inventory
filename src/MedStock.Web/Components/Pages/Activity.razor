@@ -1,0 +1,15 @@
+@page "/activity"
+@attribute [Authorize]
+
+<PageTitle>Live activity - MedStock</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Live activity</MudText>
+        <MudText Color="Color.Secondary">Orders, shipments, receipts, transfers and alerts from every connected user and the simulator, as they happen.</MudText>
+    </div>
+</div>
+
+<MudPaper Elevation="0" Class="panel pa-3 pa-md-4">
+    <ActivityFeed MaxItems="60" />
+</MudPaper>

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en" style="@HtmlStyle">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="MedStock: healthcare inventory and order management demo with real-time updates. Synthetic data." />
+    <meta name="theme-color" content="#0B1120" />
+    <title>MedStock</title>
+    <BasePath />
+    <ResourcePreloader />
+    <link rel="stylesheet" href="@Assets["fonts/fonts.css"]" />
+    <link href="@Assets["_content/MudBlazor/MudBlazor.min.css"]" rel="stylesheet" />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <ImportMap />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <HeadOutlet @rendermode="PageRenderMode" />
+</head>
+
+<body>
+    <Routes @rendermode="PageRenderMode" ThemeMode="@ThemeMode" />
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script src="@Assets["_content/MudBlazor/MudBlazor.min.js"]"></script>
+</body>
+
+</html>
+
+@code {
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
+    // Static pages (login) opt out of interactive routing with [ExcludeFromInteractiveRouting].
+    private IComponentRenderMode? PageRenderMode => HttpContext?.AcceptsInteractiveRouting() == false ? null : InteractiveServer;
+
+    // Explicit user choice from the theme cookie (null = follow system preference).
+    private string? ThemeMode
+    {
+        get
+        {
+            var v = HttpContext?.Request.Cookies[AppTheme.CookieName];
+            return v is "light" or "dark" ? v : null;
+        }
+    }
+
+    // Paint the correct background/color-scheme before CSS loads (no flash, no JS).
+    private string HtmlStyle => ThemeMode == "light"
+        ? "color-scheme:light;background-color:#F8FAFC"
+        : "color-scheme:dark;background-color:#0B1120";
+}

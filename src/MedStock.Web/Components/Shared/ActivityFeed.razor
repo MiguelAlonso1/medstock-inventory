@@ -1,0 +1,44 @@
+@inherits LiveComponentBase
+
+<MudList T="string" Dense="true" Class="activity-list" aria-live="polite" aria-label="Live activity feed">
+    @foreach (var e in _events)
+    {
+        <MudListItem T="string" Class="activity-item" @key="e.Id">
+            <div class="d-flex align-start">
+                <span class="@($"activity-icon tone-{e.Severity}")"><MudIcon Icon="@IconFor(e.Kind)" Size="Size.Small" /></span>
+                <div class="min-w-0 ml-3">
+                    <MudText Typo="Typo.body2">@e.Message</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@e.Utc.ToLocalTime().ToString("HH:mm:ss") &middot; @e.Kind</MudText>
+                </div>
+            </div>
+        </MudListItem>
+    }
+    @if (_events.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4">Waiting for activity...</MudText>
+    }
+</MudList>
+
+@code {
+    [Parameter] public int MaxItems { get; set; } = 12;
+
+    private IReadOnlyList<ActivityEvent> _events = [];
+
+    protected override Topic Topics => Topic.Activity;
+
+    protected override Task LoadAsync()
+    {
+        _events = Hub.Recent(MaxItems);
+        return Task.CompletedTask;
+    }
+
+    private static string IconFor(ActivityKind k) => k switch
+    {
+        ActivityKind.Order => Icons.Material.Rounded.ReceiptLong,
+        ActivityKind.Shipment => Icons.Material.Rounded.LocalShipping,
+        ActivityKind.Receipt => Icons.Material.Rounded.MoveToInbox,
+        ActivityKind.Transfer => Icons.Material.Rounded.SwapHoriz,
+        ActivityKind.Alert => Icons.Material.Rounded.WarningAmber,
+        _ => Icons.Material.Rounded.Info
+    };
+}

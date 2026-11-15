@@ -1,0 +1,128 @@
+@page "/purchasing"
+@attribute [Authorize]
+@inherits LiveComponentBase
+@inject PurchasingService PurchasingSvc
+@inject InventoryQueries Queries
+@inject ISnackbar Snack
+@inject IDialogService Dialogs
+
+<PageTitle>Purchase orders - MedStock</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Purchase orders</MudText>
+        <MudText Color="Color.Secondary">Reorder suggestions come from each product's min/max levels, counting stock already on order.</MudText>
+    </div>
+</div>
+
+<MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" TabPanelsClass="pt-4" Class="panel-tabs">
+    <MudTabPanel Text="@($"Reorder suggestions ({_suggestions.Count})")" Icon="@Icons.Material.Rounded.Lightbulb">
+        <MudPaper Elevation="0" Class="panel">
+            <div class="d-flex flex-wrap align-center gap-3 pa-3">
+                <MudSelect T="int" @bind-Value="_warehouseId" Label="Receive at" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:320px" Disabled="@(!CanManage)">
+                    @foreach (var w in _lookups?.Warehouses ?? []) { <MudSelectItem T="int" Value="@w.Id">@w.Code &middot; @w.Name@(w.ColdChainCapable ? " (cold chain)" : "")</MudSelectItem> }
+                </MudSelect>
+                <MudSpacer />
+                @if (CanManage)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_selected.Count == 0 || _busy)" OnClick="CreatePos" StartIcon="@Icons.Material.Rounded.ShoppingCart">Create PO(s) for @_selected.Count selected</MudButton>
+                }
+            </div>
+            <MudTable Items="_suggestions" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" FixedHeader="true" Height="calc(100vh - 430px)" Elevation="0" RowsPerPage="25"
+                      T="ReorderSuggestion" MultiSelection="@CanManage" SelectedItems="_selected" SelectedItemsChanged="OnSelected" SelectOnRowClick="false">
+                <HeaderContent>
+                    <MudTh>Product</MudTh><MudTh>Supplier</MudTh><MudTh>Available</MudTh><MudTh>On order</MudTh><MudTh>Min / Max</MudTh><MudTh>Suggested</MudTh><MudTh>Est. cost</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Product"><MudLink Href="@($"/inventory/{context.ProductId}")">@context.Name</MudLink> @if (context.ColdChain) { <MudIcon Icon="@Icons.Material.Rounded.AcUnit" Size="Size.Small" Color="Color.Info" /> }</MudTd>
+                    <MudTd DataLabel="Supplier">@context.Supplier</MudTd>
+                    <MudTd DataLabel="Available"><span class="num">@(context.OnHand - context.Allocated)</span></MudTd>
+                    <MudTd DataLabel="On order"><span class="num">@context.OnOrder</span></MudTd>
+                    <MudTd DataLabel="Min / Max"><span class="num">@context.Min / @context.Max</span></MudTd>
+                    <MudTd DataLabel="Suggested"><b class="num">@context.SuggestedQty</b></MudTd>
+                    <MudTd DataLabel="Est. cost"><span class="num">@context.Cost.ToString("C0", Us)</span></MudTd>
+                </RowTemplate>
+                <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">Nothing needs reordering right now.</MudText></NoRecordsContent>
+                <PagerContent><MudTablePager PageSizeOptions="@(new[] { 25, 50 })" /></PagerContent>
+            </MudTable>
+        </MudPaper>
+    </MudTabPanel>
+
+    <MudTabPanel Text="@($"Purchase orders ({_pos.Count})")" Icon="@Icons.Material.Rounded.Receipt">
+        <MudPaper Elevation="0" Class="panel pa-2">
+            <MudExpansionPanels Elevation="0" MultiExpansion="true">
+                @foreach (var po in _pos)
+                {
+                    <MudExpansionPanel @key="po.Id">
+                        <TitleContent>
+                            <div class="d-flex align-center flex-wrap gap-3 w-100">
+                                <MudText Typo="Typo.subtitle1" Class="font-weight-bold">@po.Number</MudText>
+                                <Chips Po="po.Status" />
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">@po.Supplier &rarr; @po.Warehouse &middot; @po.Units units &middot; @po.Value.ToString("C0", Us) &middot; due @po.Expected.ToString("MMM d")</MudText>
+                            </div>
+                        </TitleContent>
+                        <ChildContent>
+                            <MudSimpleTable Dense="true" Class="lot-table" Style="overflow-x:auto">
+                                <thead><tr><th>Product</th><th class="text-right">Ordered</th><th class="text-right">Received</th><th class="text-right">Unit cost</th></tr></thead>
+                                <tbody>
+                                @foreach (var l in po.Lines) { <tr><td>@l.Name</td><td class="text-right">@l.Ordered</td><td class="text-right">@l.Received</td><td class="text-right">@l.UnitCost.ToString("C2", Us)</td></tr> }
+                                </tbody>
+                            </MudSimpleTable>
+                            @if (CanManage && po.Status is PurchaseOrderStatus.Ordered or PurchaseOrderStatus.PartiallyReceived)
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Success" Class="mt-3" OnClick="() => Receive(po)" StartIcon="@Icons.Material.Rounded.MoveToInbox">Receive remaining stock</MudButton>
+                            }
+                        </ChildContent>
+                    </MudExpansionPanel>
+                }
+            </MudExpansionPanels>
+            @if (_pos.Count == 0) { <MudText Class="pa-6" Color="Color.Secondary">No purchase orders yet.</MudText> }
+        </MudPaper>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    private static readonly CultureInfo Us = CultureInfo.GetCultureInfo("en-US");
+    private IReadOnlyList<ReorderSuggestion> _suggestions = [];
+    private IReadOnlyList<PurchaseOrderView> _pos = [];
+    private Lookups? _lookups;
+    private HashSet<ReorderSuggestion> _selected = [];
+    private int _warehouseId;
+    private bool _busy;
+
+    protected override Topic Topics => Topic.Purchasing | Topic.Stock;
+
+    protected override async Task LoadAsync()
+    {
+        _lookups ??= await Queries.GetLookupsAsync();
+        if (_warehouseId == 0) _warehouseId = _lookups.Warehouses.FirstOrDefault()?.Id ?? 0;
+        _suggestions = await PurchasingSvc.GetSuggestionsAsync();
+        _pos = await PurchasingSvc.ListAsync();
+        var keep = _selected.Select(s => s.ProductId).ToHashSet();
+        _selected = _suggestions.Where(s => keep.Contains(s.ProductId)).ToHashSet();
+    }
+
+    private void OnSelected(HashSet<ReorderSuggestion> items) => _selected = items;
+
+    private async Task CreatePos()
+    {
+        _busy = true;
+        try
+        {
+            var r = await PurchasingSvc.CreatePurchaseOrdersAsync(_selected.Select(s => new NewOrderLine(s.ProductId, s.SuggestedQty)).ToList(), _warehouseId, Actor);
+            Snack.Add(r.Ok ? $"Created {string.Join(", ", r.Value!)}" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
+            if (r.Ok) _selected = [];
+            await LoadAsync();
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task Receive(PurchaseOrderView po)
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync($"Receive {po.Number}?", $"This books the remaining {po.Lines.Sum(l => l.Ordered - l.Received)} units into {po.Warehouse} as new lots and closes the PO.", yesText: "Receive stock", cancelText: "Cancel");
+        if (ok != true) return;
+        var r = await PurchasingSvc.ReceiveAsync(po.Id, Actor);
+        Snack.Add(r.Ok ? $"{po.Number} received" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
+        await LoadAsync();
+    }
+}

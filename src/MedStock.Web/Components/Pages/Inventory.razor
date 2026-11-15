@@ -1,0 +1,162 @@
+@page "/inventory"
+@attribute [Authorize]
+@inherits LiveComponentBase
+@inject InventoryQueries Queries
+
+<PageTitle>Inventory - MedStock</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Inventory</MudText>
+        <MudText Color="Color.Secondary">Search, filter and drill into products and lots. Paging, sorting and filtering run in the database.</MudText>
+    </div>
+</div>
+
+<MudPaper Elevation="0" Class="panel pa-3 pa-md-4 mb-4">
+    <MudGrid Spacing="2" Class="align-center">
+        <MudItem xs="12" md="4">
+            <MudTextField T="string" @bind-Value="_search" Placeholder="Search name, SKU or NDC" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" DebounceInterval="300"
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search" OnDebounceIntervalElapsed="Reload" Clearable="true" aria-label="Search products" />
+        </MudItem>
+        <MudItem xs="6" md="2">
+            <MudSelect T="int?" Value="_warehouseId" ValueChanged="OnWarehouse" Label="Location" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true">
+                @foreach (var w in _lookups?.Warehouses ?? [])
+                {
+                    <MudSelectItem T="int?" Value="@((int?)w.Id)">@w.Code</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" md="3">
+            <MudSelect T="string" Value="_category" ValueChanged="OnCategory" Label="Category" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true">
+                @foreach (var c in _lookups?.Categories ?? [])
+                {
+                    <MudSelectItem T="string" Value="@c">@c</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <div class="chip-row" role="group" aria-label="Quick filters">
+                <MudChip T="string" Size="Size.Medium" Variant="@(_filter == InventoryFilter.All ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" OnClick="() => SetFilter(InventoryFilter.All)">All</MudChip>
+                <MudChip T="string" Size="Size.Medium" Variant="@(_filter == InventoryFilter.LowStock ? Variant.Filled : Variant.Outlined)" Color="Color.Warning" OnClick="() => SetFilter(InventoryFilter.LowStock)" Icon="@Icons.Material.Rounded.TrendingDown">Low stock</MudChip>
+                <MudChip T="string" Size="Size.Medium" Variant="@(_filter == InventoryFilter.Expiring ? Variant.Filled : Variant.Outlined)" Color="Color.Error" OnClick="() => SetFilter(InventoryFilter.Expiring)" Icon="@Icons.Material.Rounded.EventBusy">Expiring 90d</MudChip>
+                <MudChip T="string" Size="Size.Medium" Variant="@(_filter == InventoryFilter.ColdChain ? Variant.Filled : Variant.Outlined)" Color="Color.Info" OnClick="() => SetFilter(InventoryFilter.ColdChain)" Icon="@Icons.Material.Rounded.AcUnit">Cold chain</MudChip>
+            </div>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<MudPaper Elevation="0" Class="panel">
+    <MudDataGrid @ref="_grid" T="InventoryRow" ServerData="ServerReload" Hover="true" Dense="true" SortMode="SortMode.Single" Breakpoint="Breakpoint.Sm"
+                 FixedHeader="true" Height="calc(100vh - 360px)" Class="inv-grid" ReadOnly="true">
+        <Columns>
+            <HierarchyColumn T="InventoryRow" ButtonDisabledFunc="@(_ => false)" InitiallyExpandedFunc="@(_ => false)" />
+            <PropertyColumn Property="x => x.Name" Title="Product" CellStyle="min-width:240px">
+                <CellTemplate>
+                    <div class="min-w-0">
+                        <MudText Typo="Typo.body2" Class="font-weight-semibold text-truncate">@context.Item.Name</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Item.Sku &middot; NDC @context.Item.Ndc</MudText>
+                    </div>
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Category" Title="Category" HeaderClass="d-none d-xl-table-cell" CellClass="d-none d-xl-table-cell" />
+            <PropertyColumn Property="x => x.OnHand" Title="On hand" Sortable="true">
+                <CellTemplate>
+                    <span class="num">@context.Item.OnHand.ToString("N0")</span>
+                    @if (context.Item.Allocated > 0) { <MudText Typo="Typo.caption" Color="Color.Secondary" Class="ml-1">(@context.Item.Allocated reserved)</MudText> }
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Min" Title="Min / Max" Sortable="false">
+                <CellTemplate><span class="num">@context.Item.Min / @context.Item.Max</span></CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.UnitCost" Title="Unit cost" HeaderClass="d-none d-xl-table-cell" CellClass="d-none d-xl-table-cell">
+                <CellTemplate><span class="num">@context.Item.UnitCost.ToString("C2", Us)</span></CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Value" Title="Value" Sortable="true">
+                <CellTemplate><span class="num">@context.Item.Value.ToString("C0", Us)</span></CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.NextExpiry" Title="Next expiry" Sortable="true">
+                <CellTemplate>
+                    @if (context.Item.NextExpiry is { } e)
+                    {
+                        <Chips Expiry="@ExpiryClassifier.Classify(e, _today)" DaysLeft="@ExpiryClassifier.DaysToExpiry(e, _today)" />
+                    }
+                    else { <MudText Typo="Typo.caption" Color="Color.Secondary">no stock</MudText> }
+                </CellTemplate>
+            </PropertyColumn>
+            <TemplateColumn Title="Flags" Sortable="false">
+                <CellTemplate>
+                    <div class="d-flex gap-1">
+                        @if (context.Item.Low) { <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="my-0">Low</MudChip> }
+                        @if (context.Item.ColdChain) { <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined" Icon="@Icons.Material.Rounded.AcUnit" Class="my-0">Cold</MudChip> }
+                    </div>
+                </CellTemplate>
+            </TemplateColumn>
+        </Columns>
+        <ChildRowContent>
+            <div class="lot-drill pa-3">
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Lots on hand (first-expiry-first-out order)</MudText>
+                @if (_lots.TryGetValue(context.Item.Id, out var lots))
+                {
+                    <MudSimpleTable Dense="true" Hover="false" Class="lot-table">
+                        <thead><tr><th>Lot</th><th>Location</th><th>Expiry</th><th></th><th class="text-right">On hand</th><th class="text-right">Reserved</th></tr></thead>
+                        <tbody>
+                        @foreach (var l in lots)
+                        {
+                            <tr>
+                                <td>@l.LotNumber</td><td>@l.Warehouse</td><td>@l.Expiry.ToString("yyyy-MM-dd")</td>
+                                <td><Chips Expiry="l.Class" DaysLeft="l.DaysLeft" /></td>
+                                <td class="text-right">@l.OnHand</td><td class="text-right">@l.Allocated</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+                else { <MudProgressLinear Indeterminate="true" /> }
+                <MudButton Href="@($"/inventory/{context.Item.Id}")" Size="Size.Small" Variant="Variant.Text" Class="mt-2" EndIcon="@Icons.Material.Rounded.ArrowForward">Open product detail</MudButton>
+            </div>
+        </ChildRowContent>
+        <PagerContent>
+            <MudDataGridPager T="InventoryRow" PageSizeOptions="@(new[] { 10, 25, 50 })" />
+        </PagerContent>
+        <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">No products match these filters.</MudText></NoRecordsContent>
+    </MudDataGrid>
+</MudPaper>
+
+@code {
+    private static readonly CultureInfo Us = CultureInfo.GetCultureInfo("en-US");
+    private MudDataGrid<InventoryRow> _grid = default!;
+    private Lookups? _lookups;
+    private string? _search;
+    private int? _warehouseId;
+    private string? _category;
+    private InventoryFilter _filter = InventoryFilter.All;
+    private DateOnly _today = DateOnly.FromDateTime(DateTime.UtcNow);
+    private readonly Dictionary<int, IReadOnlyList<LotRow>> _lots = new();
+
+    protected override Topic Topics => Topic.Stock;
+
+    protected override async Task LoadAsync()
+    {
+        _lookups ??= await Queries.GetLookupsAsync();
+        _today = DateOnly.FromDateTime(DateTime.UtcNow);
+        if (_grid is not null) await _grid.ReloadServerData();
+    }
+
+    private async Task<GridData<InventoryRow>> ServerReload(GridState<InventoryRow> state, CancellationToken ct)
+    {
+        var sort = state.SortDefinitions.FirstOrDefault();
+        var key = sort?.SortBy switch
+        {
+            "Name" => "name", "Category" => "category", "OnHand" => "onhand", "UnitCost" => "cost", "Value" => "value", "NextExpiry" => "expiry", _ => "name"
+        };
+        var res = await Queries.GetInventoryAsync(new InventoryQuery(_search, _warehouseId, _category, _filter, key, sort?.Descending ?? false, state.Page, state.PageSize));
+        _lots.Clear();
+        foreach (var kv in await Queries.GetLotsAsync(res.Items.Select(r => r.Id).ToList())) _lots[kv.Key] = kv.Value;
+        return new GridData<InventoryRow> { Items = res.Items, TotalItems = res.Total };
+    }
+
+    private async Task Reload() { if (_grid is not null) { _grid.NavigateTo(Page.First); } }
+    private async Task SetFilter(InventoryFilter f) { _filter = f; await Reload(); }
+    private async Task OnWarehouse(int? id) { _warehouseId = id; await Reload(); }
+    private async Task OnCategory(string? c) { _category = c; await Reload(); }
+}

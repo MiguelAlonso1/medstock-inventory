@@ -1,0 +1,21 @@
+<MudPaper Elevation="0" Class="@($"kpi-tile kpi-{Tone} pa-4 pa-md-5")">
+    <div class="d-flex align-center justify-space-between mb-2">
+        <MudText Typo="Typo.overline" Class="kpi-label">@Label</MudText>
+        <span class="kpi-icon"><MudIcon Icon="@Icon" Size="Size.Small" /></span>
+    </div>
+    <MudText Typo="Typo.h4" Class="@(Compact ? "kpi-value compact" : "kpi-value")">@Value</MudText>
+    @if (!string.IsNullOrEmpty(Hint))
+    {
+        <MudText Typo="Typo.caption" Color="Color.Secondary">@Hint</MudText>
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public string Value { get; set; } = "";
+    [Parameter] public bool Compact { get; set; }
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public string Icon { get; set; } = Icons.Material.Rounded.Info;
+    /// <summary>primary | cyan | warning | error | success</summary>
+    [Parameter] public string Tone { get; set; } = "primary";
+}

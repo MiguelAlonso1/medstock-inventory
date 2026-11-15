@@ -1,0 +1,53 @@
+@* Small helpers: render a chip for an expiry class, order status or PO status. Use via <Chips Expiry="..."/> etc. *@
+@if (Expiry is { } e)
+{
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="ExpiryColor(e)" Class="my-0">@ExpiryText(e)</MudChip>
+}
+else if (Order is { } o)
+{
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="OrderColor(o)" Class="my-0">@o</MudChip>
+}
+else if (Po is { } p)
+{
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="PoColor(p)" Class="my-0">@(p == PurchaseOrderStatus.PartiallyReceived ? "Partial" : p.ToString())</MudChip>
+}
+
+@code {
+    [Parameter] public ExpiryClass? Expiry { get; set; }
+    [Parameter] public int? DaysLeft { get; set; }
+    [Parameter] public OrderStatus? Order { get; set; }
+    [Parameter] public PurchaseOrderStatus? Po { get; set; }
+
+    private string ExpiryText(ExpiryClass c) => c switch
+    {
+        ExpiryClass.Expired => DaysLeft is { } d ? $"Expired {-d}d ago" : "Expired",
+        ExpiryClass.Ok => DaysLeft is { } d2 ? $"{d2}d" : "OK",
+        _ => DaysLeft is { } d3 ? $"{d3}d left" : c.ToString()
+    };
+
+    public static Color ExpiryColor(ExpiryClass c) => c switch
+    {
+        ExpiryClass.Expired => Color.Error,
+        ExpiryClass.Within30 => Color.Error,
+        ExpiryClass.Within60 => Color.Warning,
+        ExpiryClass.Within90 => Color.Info,
+        _ => Color.Success
+    };
+
+    public static Color OrderColor(OrderStatus s) => s switch
+    {
+        OrderStatus.Pending => Color.Warning,
+        OrderStatus.Allocated => Color.Info,
+        OrderStatus.Picking => Color.Primary,
+        OrderStatus.Shipped => Color.Success,
+        _ => Color.Default
+    };
+
+    public static Color PoColor(PurchaseOrderStatus s) => s switch
+    {
+        PurchaseOrderStatus.Ordered => Color.Info,
+        PurchaseOrderStatus.PartiallyReceived => Color.Warning,
+        PurchaseOrderStatus.Received => Color.Success,
+        _ => Color.Default
+    };
+}

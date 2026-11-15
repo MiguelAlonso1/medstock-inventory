@@ -1,0 +1,100 @@
+@page "/login"
+@layout AuthLayout
+@attribute [ExcludeFromInteractiveRouting]
+@inject NavigationManager Nav
+@inject IConfiguration Cfg
+
+<PageTitle>Sign in - MedStock</PageTitle>
+
+<div class="auth-grid">
+    <section class="auth-hero" aria-labelledby="auth-title">
+        <div class="auth-glow"></div>
+        <div class="d-flex align-center mb-6">
+            <span class="brand-mark brand-mark-lg"><MudIcon Icon="@Icons.Material.Rounded.Medication" /></span>
+            <MudText Typo="Typo.h5" Class="ml-3">MedStock</MudText>
+        </div>
+        <MudText Typo="Typo.h3" Class="mb-3" id="auth-title">Healthcare inventory and orders, live.</MudText>
+        <MudText Typo="Typo.subtitle1" Color="Color.Secondary" Class="mb-6">
+            Lot and expiry tracking, FEFO allocation, cold-chain alerts, purchase orders and transfers across four distribution centers,
+            updating in real time for every connected user.
+        </MudText>
+        <div class="auth-points">
+            <div><MudIcon Icon="@Icons.Material.Rounded.EventAvailable" Color="Color.Secondary" /> First-expiry-first-out allocation</div>
+            <div><MudIcon Icon="@Icons.Material.Rounded.AcUnit" Color="Color.Secondary" /> Cold-chain aware stock and alerts</div>
+            <div><MudIcon Icon="@Icons.Material.Rounded.Bolt" Color="Color.Secondary" /> SignalR live dashboards, no page refresh</div>
+        </div>
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-8 d-block">Portfolio demo with synthetic data. No real products, companies or patients.</MudText>
+    </section>
+
+    <section class="auth-panel" aria-label="Sign in">
+        <MudPaper Elevation="0" Class="auth-card pa-5 pa-sm-7">
+            @if (Error)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="mb-4">Invalid email or password.</MudAlert>
+            }
+            @if (Cfg.GetValue("Demo:OneClickLogin", true))
+            {
+                <MudText Typo="Typo.h5" Class="mb-1">Try the demo</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">One click, no password. Pick a role to see what it can do.</MudText>
+                @foreach (var d in DemoUsers.All)
+                {
+                    <form method="post" action="/account/demo" class="mb-3">
+                        <AntiforgeryToken />
+                        <input type="hidden" name="role" value="@d.Role" />
+                        <input type="hidden" name="returnUrl" value="@SafeReturn" />
+                        <button type="submit" class="role-card" aria-label="@($"Continue as {d.Role}")">
+                            <span class="role-icon"><MudIcon Icon="@RoleIcon(d.Role)" /></span>
+                            <span class="role-text">
+                                <span class="role-name">@d.Role</span>
+                                <span class="role-blurb">@d.Blurb</span>
+                            </span>
+                            <MudIcon Icon="@Icons.Material.Rounded.ArrowForward" Size="Size.Small" />
+                        </button>
+                    </form>
+                }
+                <MudDivider Class="my-5" />
+            }
+            <MudText Typo="Typo.h6" Class="mb-3">Sign in with email</MudText>
+            <form method="post" action="/account/login">
+                <AntiforgeryToken />
+                <input type="hidden" name="returnUrl" value="@SafeReturn" />
+                <MudTextField T="string" Variant="Variant.Outlined" Margin="Margin.Dense" Placeholder="Email" InputType="InputType.Email" Class="mb-3"
+                              UserAttributes="@(new Dictionary<string, object> { ["name"] = "email", ["autocomplete"] = "username", ["aria-label"] = "Email" })" />
+                <MudTextField T="string" Variant="Variant.Outlined" Margin="Margin.Dense" Placeholder="Password" InputType="InputType.Password" Class="mb-3"
+                              UserAttributes="@(new Dictionary<string, object> { ["name"] = "password", ["autocomplete"] = "current-password", ["aria-label"] = "Password" })" />
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Size="Size.Large">Sign in</MudButton>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-3 d-block">Demo accounts use <code>@DemoUsers.Password</code> (e.g. viewer@medstock.demo).</MudText>
+            </form>
+            <div class="d-flex justify-center mt-4">
+                <MudButton Href="@ThemeHref" Size="Size.Small" Color="Color.Default" StartIcon="@(_dark ? Icons.Material.Rounded.LightMode : Icons.Material.Rounded.DarkMode)" data-enhance-nav="false">
+                    @(_dark ? "Light theme" : "Dark theme")
+                </MudButton>
+            </div>
+        </MudPaper>
+    </section>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthTask { get; set; }
+    [CascadingParameter(Name = "ThemeMode")] private string? ThemeMode { get; set; }
+    [SupplyParameterFromQuery(Name = "returnUrl")] private string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery(Name = "error")] private string? ErrorFlag { get; set; }
+
+    private bool Error => !string.IsNullOrEmpty(ErrorFlag);
+    private bool _dark => ThemeMode != "light";
+    private string SafeReturn => MedStock.Web.Endpoints.AppEndpoints.SafeLocal(ReturnUrl);
+    private string ThemeHref => $"theme/{(_dark ? "light" : "dark")}?returnUrl={Uri.EscapeDataString("/login")}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthTask is not null && (await AuthTask).User.Identity?.IsAuthenticated == true) Nav.NavigateTo("/");
+    }
+
+    private static string RoleIcon(string role) => role switch
+    {
+        Roles.Admin => Icons.Material.Rounded.AdminPanelSettings,
+        Roles.WarehouseManager => Icons.Material.Rounded.Warehouse,
+        Roles.Picker => Icons.Material.Rounded.Checklist,
+        _ => Icons.Material.Rounded.Visibility
+    };
+}

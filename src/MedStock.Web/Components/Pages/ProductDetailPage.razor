@@ -1,0 +1,104 @@
+@page "/inventory/{Id:int}"
+@attribute [Authorize]
+@inherits LiveComponentBase
+@inject InventoryQueries Queries
+
+<PageTitle>@(_d?.Product.Name ?? "Product") - MedStock</PageTitle>
+
+@if (_notFound)
+{
+    <MudAlert Severity="Severity.Warning">Product not found. <MudLink Href="/inventory">Back to inventory</MudLink></MudAlert>
+}
+else if (_d is null)
+{
+    <MudProgressLinear Indeterminate="true" />
+}
+else
+{
+    var p = _d.Product;
+    <MudBreadcrumbs Items="_crumbs" Class="px-0 pt-0" />
+    <div class="page-head">
+        <div class="min-w-0">
+            <MudText Typo="Typo.h3" Class="mb-1">@p.Name</MudText>
+            <MudText Color="Color.Secondary">@p.Sku &middot; NDC @p.NdcCode &middot; @p.Category &middot; supplier @_d.Supplier</MudText>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            @if (p.ColdChain) { <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Icon="@Icons.Material.Rounded.AcUnit">Cold chain 2-8 C</MudChip> }
+            @if (_d.OnHand - _d.Allocated <= p.MinLevel) { <MudChip T="string" Color="Color.Warning" Variant="Variant.Filled">Low stock</MudChip> }
+        </div>
+    </div>
+
+    <MudGrid Spacing="3" Class="mb-1">
+        <MudItem xs="6" md="3"><KpiTile Label="On hand" Value="@_d.OnHand.ToString("N0")" Hint="@($"{_d.Allocated} reserved for orders")" Icon="@Icons.Material.Rounded.Inventory2" /></MudItem>
+        <MudItem xs="6" md="3"><KpiTile Label="Available" Value="@((_d.OnHand - _d.Allocated).ToString("N0"))" Hint="@($"min {p.MinLevel} / max {p.MaxLevel}")" Icon="@Icons.Material.Rounded.CheckCircle" Tone="cyan" /></MudItem>
+        <MudItem xs="6" md="3"><KpiTile Label="On order" Value="@_d.OnOrder.ToString("N0")" Hint="open purchase orders" Icon="@Icons.Material.Rounded.ShoppingCart" Tone="cyan" /></MudItem>
+        <MudItem xs="6" md="3"><KpiTile Label="Stock value" Value="@((_d.OnHand * p.UnitCost).ToString("C0", Us))" Hint="@($"{p.UnitCost.ToString("C2", Us)} per {p.Unit}")" Icon="@Icons.Material.Rounded.Payments" /></MudItem>
+    </MudGrid>
+
+    <MudGrid Spacing="3" Class="mt-0">
+        <MudItem xs="12" lg="5">
+            <MudPaper Elevation="0" Class="panel pa-4">
+                <MudText Typo="Typo.h6" Class="mb-3">Stock by location</MudText>
+                @foreach (var l in _d.Locations)
+                {
+                    <div class="top-row">
+                        <div class="d-flex justify-space-between mb-1">
+                            <MudText Typo="Typo.body2">@l.Code &middot; @l.Name</MudText>
+                            <MudText Typo="Typo.body2" Class="font-weight-bold">@l.OnHand.ToString("N0")</MudText>
+                        </div>
+                        <MudProgressLinear Value="@(_d.OnHand == 0 ? 0 : 100.0 * l.OnHand / _d.OnHand)" Color="Color.Primary" Size="Size.Small" Rounded="true" aria-label="@($"{l.Code} share of stock")" />
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" lg="7">
+            <MudPaper Elevation="0" Class="panel pa-4">
+                <MudText Typo="Typo.h6" Class="mb-3">Lots and expiry</MudText>
+                <MudSimpleTable Dense="true" Hover="true" Class="lot-table" Style="overflow-x:auto">
+                    <thead><tr><th>Lot</th><th>Location</th><th>Expiry</th><th></th><th class="text-right">On hand</th><th class="text-right">Reserved</th></tr></thead>
+                    <tbody>
+                    @foreach (var l in _d.Lots)
+                    {
+                        <tr>
+                            <td>@l.LotNumber</td><td>@l.Warehouse</td><td>@l.Expiry.ToString("yyyy-MM-dd")</td>
+                            <td><Chips Expiry="l.Class" DaysLeft="l.DaysLeft" /></td>
+                            <td class="text-right">@l.OnHand</td><td class="text-right">@l.Allocated</td>
+                        </tr>
+                    }
+                    @if (_d.Lots.Count == 0) { <tr><td colspan="6">No stock on hand.</td></tr> }
+                    </tbody>
+                </MudSimpleTable>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12">
+            <MudPaper Elevation="0" Class="panel pa-4">
+                <MudText Typo="Typo.h6" Class="mb-3">Movement timeline</MudText>
+                <MudTimeline TimelineOrientation="TimelineOrientation.Vertical" TimelinePosition="TimelinePosition.Start" Class="move-timeline">
+                    @foreach (var m in _d.Movements.Take(14))
+                    {
+                        <MudTimelineItem Color="@(m.Quantity > 0 ? Color.Success : Color.Warning)" Size="Size.Small" @key="m.Id">
+                            <MudText Typo="Typo.body2"><b>@m.Type</b> @(m.Quantity > 0 ? "+" : "")@m.Quantity at @m.Warehouse, lot @m.LotNumber</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@m.Utc.ToLocalTime().ToString("MMM d HH:mm") &middot; @m.Reference &middot; @m.Actor</MudText>
+                        </MudTimelineItem>
+                    }
+                </MudTimeline>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private static readonly CultureInfo Us = CultureInfo.GetCultureInfo("en-US");
+    [Parameter] public int Id { get; set; }
+    private ProductDetail? _d;
+    private bool _notFound;
+    private readonly List<BreadcrumbItem> _crumbs = [new("Inventory", "/inventory"), new("Product", null, true)];
+
+    protected override Topic Topics => Topic.Stock;
+
+    protected override async Task LoadAsync()
+    {
+        _d = await Queries.GetProductAsync(Id);
+        _notFound = _d is null;
+    }
+}

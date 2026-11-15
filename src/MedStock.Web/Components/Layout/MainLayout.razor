@@ -1,0 +1,171 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Nav
+@inject SimulationControl Sim
+@inject InventoryEventHub Hub
+@inject InventoryQueries Queries
+
+<MudThemeProvider @ref="_themeProvider" Theme="AppTheme.Theme" IsDarkMode="_isDark" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<MudLayout>
+    <MudAppBar Elevation="0" Fixed="true" Class="app-bar">
+        <MudIconButton Icon="@Icons.Material.Rounded.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="() => _drawerOpen = !_drawerOpen" aria-label="Toggle navigation" Class="d-md-none" />
+        <MudLink Href="/" Underline="Underline.None" Color="Color.Inherit" Class="d-flex align-center brand" aria-label="MedStock home">
+            <span class="brand-mark"><MudIcon Icon="@Icons.Material.Rounded.Medication" Size="Size.Small" /></span>
+            <MudText Typo="Typo.h6" Class="ml-2">MedStock</MudText>
+        </MudLink>
+        <MudSpacer />
+        <AuthorizeView Roles="@Roles.ManageRoles">
+            <Authorized>
+                <MudTooltip Text="@(Sim.Enabled ? "Live simulation running. Click to pause." : "Simulation paused. Click to resume.")">
+                    <MudChip T="string" Class="live-chip" Color="@(Sim.Enabled ? Color.Success : Color.Default)" Variant="Variant.Outlined" Size="Size.Small"
+                             OnClick="ToggleSim" aria-label="Toggle live simulation">
+                        <span class="@(Sim.Enabled ? "live-dot" : "live-dot off")"></span>@(Sim.Enabled ? "Live" : "Paused")
+                    </MudChip>
+                </MudTooltip>
+            </Authorized>
+            <NotAuthorized>
+                <MudChip T="string" Class="live-chip" Color="@(Sim.Enabled ? Color.Success : Color.Default)" Variant="Variant.Outlined" Size="Size.Small">
+                    <span class="@(Sim.Enabled ? "live-dot" : "live-dot off")"></span>@(Sim.Enabled ? "Live" : "Paused")
+                </MudChip>
+            </NotAuthorized>
+        </AuthorizeView>
+        <MudTooltip Text="@(_isDark ? "Switch to light theme" : "Switch to dark theme")">
+            <MudIconButton Icon="@(_isDark ? Icons.Material.Rounded.LightMode : Icons.Material.Rounded.DarkMode)" Color="Color.Inherit" Href="@ThemeHref"
+                           data-enhance-nav="false" Class="ml-1" aria-label="@(_isDark ? "Switch to light theme" : "Switch to dark theme")" />
+        </MudTooltip>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" Variant="DrawerVariant.Responsive" Breakpoint="Breakpoint.Md" Elevation="0" ClipMode="DrawerClipMode.Always" Class="app-drawer">
+        <div class="drawer-inner">
+            <MudNavMenu Class="pt-3">
+                <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Rounded.Dashboard">Overview</MudNavLink>
+                <MudNavLink Href="/inventory" Icon="@Icons.Material.Rounded.Inventory2">Inventory</MudNavLink>
+                <MudNavLink Href="/orders" Icon="@Icons.Material.Rounded.LocalShipping">Orders</MudNavLink>
+                <MudNavLink Href="/purchasing" Icon="@Icons.Material.Rounded.ShoppingCart">Purchase orders</MudNavLink>
+                <MudNavLink Href="/transfers" Icon="@Icons.Material.Rounded.SwapHoriz">Transfers</MudNavLink>
+                <MudNavLink Href="/alerts" Icon="@Icons.Material.Rounded.NotificationsActive">
+                    Alerts @if (_alertCount > 0) { <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled" Class="ml-2 my-0 nav-badge">@(_alertCount > 99 ? "99+" : _alertCount.ToString())</MudChip> }
+                </MudNavLink>
+                <MudNavLink Href="/activity" Icon="@Icons.Material.Rounded.Bolt">Live activity</MudNavLink>
+                <AuthorizeView Roles="@Roles.Admin">
+                    <MudNavLink Href="/admin" Icon="@Icons.Material.Rounded.AdminPanelSettings">Admin</MudNavLink>
+                </AuthorizeView>
+            </MudNavMenu>
+            <AuthorizeView>
+                <Authorized>
+                    <div class="drawer-user">
+                        <div class="d-flex align-center mb-3">
+                            <MudAvatar Color="Color.Primary" Size="Size.Medium" Class="mr-3">@Initials(context.User)</MudAvatar>
+                            <div class="min-w-0">
+                                <MudText Typo="Typo.subtitle2" Class="text-truncate">@(context.User.FindFirst("display_name")?.Value ?? context.User.Identity?.Name)</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@(context.User.FindFirst(ClaimTypes.Role)?.Value)</MudText>
+                            </div>
+                        </div>
+                        <form method="post" action="/account/logout">
+                            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined" Color="Color.Default" FullWidth="true" StartIcon="@Icons.Material.Rounded.Logout">Sign out</MudButton>
+                        </form>
+                    </div>
+                </Authorized>
+            </AuthorizeView>
+        </div>
+    </MudDrawer>
+
+    <MudMainContent id="main">
+        <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="page-container">
+            @Body
+        </MudContainer>
+        <footer class="app-footer">
+            <MudText Typo="Typo.body2" Color="Color.Secondary">MedStock v@(Version) &middot; a demo with synthetic data &middot; no real products, companies or patients</MudText>
+        </footer>
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+</div>
+
+@code {
+    private static readonly string Version =
+        (typeof(MainLayout).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "1.0.0")
+        .Split('+')[0];
+
+    [CascadingParameter(Name = "ThemeMode")] private string? ThemeMode { get; set; }
+
+    private MudThemeProvider _themeProvider = default!;
+    private bool _isDark = true;
+    private bool _drawerOpen = true;
+    private int _alertCount;
+    private bool _disposed;
+
+    private string ThemeHref => $"theme/{(_isDark ? "light" : "dark")}?returnUrl={Uri.EscapeDataString("/" + Nav.ToBaseRelativePath(Nav.Uri))}";
+
+    private static string Initials(ClaimsPrincipal u)
+    {
+        var n = u.FindFirst("display_name")?.Value ?? u.Identity?.Name ?? "?";
+        var parts = n.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 1 ? $"{parts[0][0]}{parts[^1][0]}" : n[..1].ToUpperInvariant();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (ThemeMode is "light" or "dark") _isDark = ThemeMode == "dark";
+        Nav.LocationChanged += OnLocationChanged;
+        Sim.Changed += OnSimChanged;
+        Hub.Published += OnEvent;
+        await LoadAlertsAsync();
+    }
+
+    private async Task LoadAlertsAsync()
+    {
+        try
+        {
+            var s = await Queries.GetAlertSummaryAsync();
+            _alertCount = s.LowStock + s.Expiring + s.Expired + s.ColdChain;
+        }
+        catch (Exception) { /* nav badge is best-effort */ }
+    }
+
+    private void OnEvent(ActivityEvent e)
+    {
+        if (_disposed || (e.Topics & Topic.Alerts) == 0) return;
+        _ = InvokeAsync(async () =>
+        {
+            if (_disposed) return;
+            await LoadAlertsAsync();
+            StateHasChanged();
+        });
+    }
+
+    private void OnSimChanged() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
+    private void OnLocationChanged(object? s, LocationChangedEventArgs e) { _drawerOpen = false; _ = InvokeAsync(StateHasChanged); }
+    private void ToggleSim() => Sim.SetEnabled(!Sim.Enabled);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || ThemeMode is "light" or "dark") return;
+        // No explicit choice: follow the system preference, live.
+        _isDark = await _themeProvider.GetSystemDarkModeAsync();
+        await _themeProvider.WatchSystemDarkModeAsync(async dark =>
+        {
+            _isDark = dark;
+            await InvokeAsync(StateHasChanged);
+        });
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        Nav.LocationChanged -= OnLocationChanged;
+        Sim.Changed -= OnSimChanged;
+        Hub.Published -= OnEvent;
+    }
+}

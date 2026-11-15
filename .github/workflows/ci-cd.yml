@@ -1,0 +1,164 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.x
+
+      - name: Restore
+        run: dotnet restore MedStock.slnx
+
+      - name: Build
+        run: dotnet build MedStock.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test MedStock.slnx -c Release --no-build --nologo --verbosity minimal
+
+      - name: Publish
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+        # Self-contained win-x86: host only supports ASP.NET Core up to 10.x (see CLAUDE.md)
+        run: dotnet publish src/MedStock.Web/MedStock.Web.csproj -c Release -r win-x86 --self-contained true -o ./publish
+
+      - name: Upload artifact
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: medstock
+          path: ./publish
+
+  deploy:
+    needs: build
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      FTP_SERVER: ${{ secrets.FTP_SERVER }}
+      FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+      FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: medstock
+          path: ./publish
+
+      # Secrets: FTP_SERVER, FTP_USERNAME, FTP_PASSWORD; variable: FTP_SERVER_DIR (Settings > Secrets and variables > Actions)
+      # The FTP login lands at the ACCOUNT root, which holds one folder per site. Only ever deploy into the site folder.
+      - name: Validate target folder
+        env:
+          RAW_DIR: ${{ vars.FTP_SERVER_DIR }}
+        run: |
+          DIR="$RAW_DIR"
+          DIR="${DIR#./}"; DIR="${DIR#/}"
+          while [ "${DIR%/}" != "$DIR" ]; do DIR="${DIR%/}"; done
+          case "$DIR" in
+            ""|"."|".."|*..*)
+              echo "::error::FTP_SERVER_DIR is unset or unsafe ('$RAW_DIR'). Refusing to deploy to the FTP account root. Set it to the site folder, e.g. inventory/"
+              exit 1;;
+          esac
+          echo "SERVER_DIR=$DIR/" >> "$GITHUB_ENV"
+          echo "Deploying to folder: $DIR/"
+
+      # Why lftp and not FTP-Deploy-Action: the host's IIS FTP requires TLS session reuse on data connections;
+      # basic-ftp (used by the action) does not do it and fails with ECONNRESET (data socket). lftp/curl handle it.
+      # ssl:verify-certificate no: the host certificate is issued for the provider's server name, not for the FTP_SERVER
+      # value we connect to, so verification would always fail. The channel is still encrypted (FTPS is forced).
+      # Connection method is identical to ftp-inspect.yml (proven): lftp -u "user,pass" "ftp://server" -e "...".
+      # Credentials come from the job env (masked by GitHub in logs); cmd:trace stays off.
+      - name: Install lftp and write helper
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y lftp
+          cat > "$HOME/lftp-run.sh" <<'HELPER'
+          # usage: lftp_run "<lftp commands joined with &&>"   (run from a step; needs FTP_* env)
+          # Fails loudly if the connection/login cannot be established or any command fails.
+          lftp_run() {
+            local log; log=$(mktemp)
+            lftp -u "$FTP_USERNAME,$FTP_PASSWORD" "ftp://$FTP_SERVER" -e "set cmd:trace false; set ftp:ssl-force true; set ftp:ssl-protect-data true; set ssl:verify-certificate no; set ftp:passive-mode true; set net:max-retries 3; set net:timeout 30; set net:reconnect-interval-base 5; cls -1 > /dev/null && echo LFTP_CONNECTED && $1 && echo LFTP_OK; bye" 2>&1 | tee "$log"
+            if ! grep -q LFTP_CONNECTED "$log"; then
+              echo "::error::lftp could not connect/login to the FTP server (check FTP_SERVER / FTP_USERNAME / FTP_PASSWORD secrets, FTPS settings)"
+              return 1
+            fi
+            if ! grep -q LFTP_OK "$log"; then
+              echo "::error::lftp connected but a command failed (see output above)"
+              return 1
+            fi
+          }
+          HELPER
+
+      # Write preflight: runs BEFORE the site goes offline. If we cannot create/write/remove inside the site
+      # folder, the job fails here and the live site is untouched.
+      - name: Preflight write probe
+        run: |
+          source "$HOME/lftp-run.sh"
+          echo probe > probe.txt
+          lftp_run "cd \"$SERVER_DIR\" && mkdir -f _deploy_probe && put -O _deploy_probe probe.txt && rm -r _deploy_probe"
+          echo "Write probe OK in $SERVER_DIR"
+
+      - name: Put site offline (app_offline.htm)
+        id: offline
+        run: |
+          source "$HOME/lftp-run.sh"
+          mkdir -p ./offline
+          echo '<html><body><h1>Updating, back in a minute.</h1></body></html>' > ./offline/app_offline.htm
+          lftp_run "cd \"$SERVER_DIR\" && put -O . ./offline/app_offline.htm"
+
+      # Never uses --delete: server files we did not upload (old site, .well-known, *.pfx, video.mp4) are never removed.
+      # Default `mirror -R` re-uploads every file whose size differs or whose local mtime is newer than the server's.
+      # The artifact is freshly built, so local mtimes are always newer: changed files are always overwritten.
+      # (Do NOT add --ignore-time: that compares size only and would skip same-size changed files.)
+      - name: Deploy site
+        run: |
+          source "$HOME/lftp-run.sh"
+          lftp_run "mirror -R --verbose --parallel=2 --no-perms --exclude-glob .well-known/ --exclude-glob '*.pfx' --exclude-glob 'App_Data/*.db*' --exclude-glob App_Data/logs/ --exclude-glob app_offline.htm ./publish/ \"$SERVER_DIR\""
+
+      # Runs even when the deploy failed, so the site always comes back (old or partially updated content).
+      - name: Delete app_offline.htm on server
+        if: ${{ always() && (steps.offline.outcome == 'success' || steps.offline.outcome == 'failure') }}
+        run: |
+          source "$HOME/lftp-run.sh"
+          ok=""
+          for i in 1 2 3 4 5; do
+            if lftp_run "cd \"$SERVER_DIR\" && rm -f app_offline.htm"; then ok=1; echo "app_offline.htm deleted"; break; fi
+            echo "Delete attempt $i failed"; sleep 10
+          done
+          rm -f "$HOME/lftp-run.sh"
+          if [ -z "$ok" ]; then echo "::error::Could not delete app_offline.htm; site stays offline. Remove it manually (README.md (Deployment))"; exit 1; fi
+
+      - name: Smoke test
+        env:
+          SITE_URL: ${{ vars.SITE_URL || 'https://inventory.alonsomiguel.com' }}
+        run: |
+          BASE="${SITE_URL%/}"
+          HOST="${BASE#https://}"; HOST="${HOST%%/*}"
+          for path in /health /login; do
+            ok=""
+            for i in $(seq 1 12); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$BASE$path" || echo 000)
+              echo "GET $path attempt $i: $code"
+              if [ "$code" = "200" ]; then ok=1; break; fi
+              sleep 10
+            done
+            if [ -z "$ok" ]; then echo "::error::Smoke test failed for $path"; exit 1; fi
+          done
+          # HTTP must redirect to HTTPS
+          read -r code loc < <(curl -s -o /dev/null -w '%{http_code} %{redirect_url}
+' --max-time 20 "http://$HOST/" || echo "000 ")
+          echo "http://$HOST/ -> $code $loc"
+          case "$code:$loc" in
+            301:https://*|308:https://*) ;;
+            *) echo "::error::http://$HOST/ does not redirect to https"; exit 1;;
+          esac

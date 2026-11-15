@@ -1,0 +1,72 @@
+@page "/admin"
+@attribute [Authorize(Roles = Roles.Admin)]
+@inherits LiveComponentBase
+@inject DemoSeeder Seeder
+@inject SimulationControl Sim
+@inject InventoryQueries Queries
+@inject IDialogService Dialogs
+@inject ISnackbar Snack
+
+<PageTitle>Admin - MedStock</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Admin</MudText>
+        <MudText Color="Color.Secondary">Demo controls. Only administrators see this page.</MudText>
+    </div>
+</div>
+
+<MudGrid Spacing="3">
+    <MudItem xs="12" md="6">
+        <MudPaper Elevation="0" Class="panel pa-4 pa-md-5 h-100">
+            <MudText Typo="Typo.h6" Class="mb-1">Live simulation</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">A background service creates orders, ships them, receives purchase orders and raises alerts every few seconds.</MudText>
+            <MudSwitch T="bool" Value="Sim.Enabled" ValueChanged="OnSim" Color="Color.Success" Label="@(Sim.Enabled ? "Running" : "Paused")" />
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudPaper Elevation="0" Class="panel pa-4 pa-md-5 h-100">
+            <MudText Typo="Typo.h6" Class="mb-1">Ledger consistency</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">Replays every stock movement and checks that no location/lot ever went negative and balances match current stock.</MudText>
+            <MudButton Variant="Variant.Outlined" OnClick="Verify" StartIcon="@Icons.Material.Rounded.FactCheck">Verify ledger</MudButton>
+            @if (_ledger is { } l)
+            {
+                <MudAlert Class="mt-3" Dense="true" Severity="@(l.Violations == 0 && l.Mismatches == 0 ? Severity.Success : Severity.Error)">
+                    @l.Movements.ToString("N0") movements replayed: @l.Violations negative-stock violations, @l.Mismatches balance mismatches.
+                </MudAlert>
+            }
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12">
+        <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
+            <MudText Typo="Typo.h6" Class="mb-1">Reset demo data</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">Deletes all products, stock, orders, purchase orders and history, then regenerates the synthetic data set. Demo users are kept.</MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="Reset" Disabled="_busy" StartIcon="@Icons.Material.Rounded.RestartAlt">Reset demo data</MudButton>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private bool _busy;
+    private (int Movements, int Violations, int Mismatches)? _ledger;
+
+    protected override Task LoadAsync() => Task.CompletedTask;
+
+    private void OnSim(bool on) => Sim.SetEnabled(on);
+
+    private async Task Verify() => _ledger = await Queries.VerifyLedgerAsync();
+
+    private async Task Reset()
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync("Reset demo data?", "All current data is replaced with a fresh synthetic data set.", yesText: "Reset", cancelText: "Cancel");
+        if (ok != true) return;
+        _busy = true;
+        try
+        {
+            await Seeder.ResetAsync(Actor);
+            _ledger = null;
+            Snack.Add("Demo data reset", Severity.Success);
+        }
+        finally { _busy = false; }
+    }
+}

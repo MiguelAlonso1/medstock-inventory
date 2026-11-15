@@ -1,0 +1,133 @@
+@page "/orders/new"
+@attribute [Authorize(Roles = Roles.ManageRoles)]
+@inherits LiveComponentBase
+@inject InventoryQueries Queries
+@inject OrderService OrderSvc
+@inject ISnackbar Snack
+
+<PageTitle>New order - MedStock</PageTitle>
+
+<MudBreadcrumbs Items="_crumbs" Class="px-0 pt-0" />
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">New customer order</MudText>
+        <MudText Color="Color.Secondary">Stock is reserved first-expiry-first-out from the fulfilling warehouse the moment the order is created.</MudText>
+    </div>
+</div>
+
+<MudGrid Spacing="3">
+    <MudItem xs="12" lg="7">
+        <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
+            <MudForm @ref="_form" @bind-IsValid="_valid" Spacing="2">
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" sm="6">
+                        <MudSelect T="int?" @bind-Value="_customerId" Label="Customer" Variant="Variant.Outlined" Required="true" RequiredError="Choose a customer"
+                                   Validation="@((Func<int?, string?>)(v => v is null ? "Choose a customer" : null))">
+                            @foreach (var c in _lookups?.Customers ?? []) { <MudSelectItem T="int?" Value="@((int?)c.Id)">@c.Name</MudSelectItem> }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudSelect T="int?" @bind-Value="_warehouseId" Label="Fulfilling warehouse" Variant="Variant.Outlined" Required="true" RequiredError="Choose a warehouse"
+                                   Validation="@((Func<int?, string?>)(v => v is null ? "Choose a warehouse" : null))">
+                            @foreach (var w in _lookups?.Warehouses ?? []) { <MudSelectItem T="int?" Value="@((int?)w.Id)">@w.Code &middot; @w.Name@(w.ColdChainCapable ? " (cold chain)" : "")</MudSelectItem> }
+                        </MudSelect>
+                    </MudItem>
+                </MudGrid>
+
+                <MudText Typo="Typo.h6" Class="mt-4 mb-1">Order lines</MudText>
+                @for (var i = 0; i < _lines.Count; i++)
+                {
+                    var line = _lines[i];
+                    <MudGrid Spacing="2" Class="align-start">
+                        <MudItem xs="12" sm="7">
+                            <MudAutocomplete T="ProductOption" @bind-Value="line.Product" SearchFunc="SearchProducts" ToStringFunc="@(p => p?.ToString())"
+                                             Label="Product" Variant="Variant.Outlined" Required="true" RequiredError="Choose a product" CoerceText="false" ResetValueOnEmptyText="true"
+                                             MaxItems="25" DebounceInterval="200" />
+                        </MudItem>
+                        <MudItem xs="8" sm="3">
+                            <MudNumericField T="int" @bind-Value="line.Quantity" Label="Quantity" Variant="Variant.Outlined" Min="1" Max="100000"
+                                             Validation="@((Func<int, string?>)(v => v < 1 ? "Quantity must be at least 1" : null))" />
+                        </MudItem>
+                        <MudItem xs="4" sm="2" Class="d-flex align-center" Style="min-height:56px">
+                            <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Disabled="@(_lines.Count == 1)" OnClick="() => _lines.Remove(line)" aria-label="Remove line" />
+                        </MudItem>
+                    </MudGrid>
+                }
+                <div><MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => _lines.Add(new())">Add line</MudButton></div>
+            </MudForm>
+            @if (_error is not null) { <MudAlert Severity="Severity.Error" Class="mt-3" Dense="true">@_error</MudAlert> }
+            <div class="d-flex gap-2 mt-5">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Submit" Disabled="_busy" StartIcon="@Icons.Material.Rounded.Check">Create and allocate</MudButton>
+                <MudButton Variant="Variant.Text" Href="/orders">Cancel</MudButton>
+            </div>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" lg="5">
+        <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
+            <MudText Typo="Typo.h6" Class="mb-2">Allocation result</MudText>
+            @if (_result is null)
+            {
+                <MudText Color="Color.Secondary" Typo="Typo.body2">Create the order to see which lots were reserved. Lots that expire first are consumed first, and expired lots are skipped.</MudText>
+            }
+            else
+            {
+                <div class="d-flex align-center gap-2 mb-3">
+                    <MudLink Href="@($"/orders/{_result.Id}")" Typo="Typo.subtitle1">@_result.Number</MudLink>
+                    <Chips Order="_result.Status" />
+                    @if (_result.HasShortfall) { <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="my-0">Shortfall @(_result.TotalOrdered - _result.TotalAllocated)</MudChip> }
+                </div>
+                @foreach (var l in _result.Lines)
+                {
+                    <div class="mb-3">
+                        <MudText Typo="Typo.body2" Class="font-weight-semibold">@l.Name</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@l.Allocated of @l.Ordered allocated</MudText>
+                        @foreach (var a in l.Lots)
+                        {
+                            <div class="d-flex justify-space-between alloc-row"><span>Lot @a.LotNumber &middot; exp @a.Expiry.ToString("yyyy-MM-dd")</span><span class="num">@a.Quantity</span></div>
+                        }
+                    </div>
+                }
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private sealed class LineModel { public ProductOption? Product { get; set; } public int Quantity { get; set; } = 1; }
+
+    private MudForm _form = default!;
+    private bool _valid;
+    private bool _busy;
+    private string? _error;
+    private Lookups? _lookups;
+    private int? _customerId, _warehouseId;
+    private readonly List<LineModel> _lines = [new()];
+    private OrderResult? _result;
+    private readonly List<BreadcrumbItem> _crumbs = [new("Orders", "/orders"), new("New", null, true)];
+
+    protected override async Task LoadAsync() => _lookups ??= await Queries.GetLookupsAsync();
+
+    private async Task<IEnumerable<ProductOption>> SearchProducts(string? term, CancellationToken ct) => await Queries.SearchProductsAsync(term);
+
+    private async Task Submit()
+    {
+        _error = null;
+        await _form.ValidateAsync();
+        if (!_valid || _lines.Any(l => l.Product is null)) { _error ??= "Complete the highlighted fields."; return; }
+        _busy = true;
+        try
+        {
+            var res = await OrderSvc.CreateAsync(new NewOrderRequest(_customerId ?? 0, _warehouseId ?? 0, _lines.Select(l => new NewOrderLine(l.Product!.Id, l.Quantity)).ToList()), Actor);
+            if (res.Ok)
+            {
+                _result = res.Value;
+                Snack.Add($"{res.Value!.Number} created", Severity.Success);
+                _lines.Clear(); _lines.Add(new());
+                await _form.ResetValidationAsync();
+            }
+            else _error = res.Error;
+        }
+        finally { _busy = false; }
+    }
+}

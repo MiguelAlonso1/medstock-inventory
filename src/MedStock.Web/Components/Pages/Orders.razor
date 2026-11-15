@@ -1,0 +1,69 @@
+@page "/orders"
+@attribute [Authorize]
+@inherits LiveComponentBase
+@inject OrderService OrderSvc
+@inject ISnackbar Snack
+
+<PageTitle>Orders - MedStock</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Customer orders</MudText>
+        <MudText Color="Color.Secondary">Orders are allocated first-expiry-first-out, then picked and shipped.</MudText>
+    </div>
+    @if (CanManage)
+    {
+        <MudButton Href="/orders/new" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add">New order</MudButton>
+    }
+</div>
+
+<div class="chip-row mb-4" role="group" aria-label="Status filter">
+    <MudChip T="string" Variant="@(_status is null ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" OnClick="() => SetStatus(null)">Open</MudChip>
+    @foreach (var s in new[] { OrderStatus.Pending, OrderStatus.Allocated, OrderStatus.Picking, OrderStatus.Shipped, OrderStatus.Cancelled })
+    {
+        var st = s;
+        <MudChip T="string" Variant="@(_status == st ? Variant.Filled : Variant.Outlined)" Color="@Chips.OrderColor(st)" OnClick="() => SetStatus(st)">@st</MudChip>
+    }
+</div>
+
+<MudPaper Elevation="0" Class="panel">
+    <MudTable Items="_rows" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" FixedHeader="true" Height="calc(100vh - 340px)" Elevation="0" RowsPerPage="25">
+        <HeaderContent>
+            <MudTh>Order</MudTh><MudTh>Customer</MudTh><MudTh>From</MudTh><MudTh>Status</MudTh><MudTh>Units</MudTh><MudTh>Created</MudTh><MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Order"><MudLink Href="@($"/orders/{context.Id}")">@context.Number</MudLink></MudTd>
+            <MudTd DataLabel="Customer">@context.Customer</MudTd>
+            <MudTd DataLabel="From">@context.Warehouse</MudTd>
+            <MudTd DataLabel="Status"><Chips Order="context.Status" /></MudTd>
+            <MudTd DataLabel="Units"><span class="num">@context.TotalAllocated / @context.TotalOrdered</span></MudTd>
+            <MudTd DataLabel="Created">@context.CreatedUtc.ToLocalTime().ToString("MMM d HH:mm")</MudTd>
+            <MudTd Class="text-right">
+                @if (CanFulfill && OrderWorkflow.Next(context.Status) is { } next)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" OnClick="() => Advance(context.Id)">@(next == OrderStatus.Picking ? "Start pick" : "Ship")</MudButton>
+                }
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">No orders in this view.</MudText></NoRecordsContent>
+        <PagerContent><MudTablePager PageSizeOptions="@(new[] { 25, 50 })" /></PagerContent>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private IReadOnlyList<OrderRow> _rows = [];
+    private OrderStatus? _status;
+
+    protected override Topic Topics => Topic.Orders;
+
+    protected override async Task LoadAsync() => _rows = await OrderSvc.ListAsync(_status, openOnly: _status is null);
+
+    private async Task SetStatus(OrderStatus? s) { _status = s; await LoadAsync(); }
+
+    private async Task Advance(int id)
+    {
+        var r = await OrderSvc.AdvanceAsync(id, Actor);
+        Snack.Add(r.Ok ? $"{r.Value!.Number} is now {r.Value.Status}" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
+        await LoadAsync();
+    }
+}
