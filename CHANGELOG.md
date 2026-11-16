@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 - 2026-11-16
+
+Deployment to production slot.
+
+- Deploys to the shared host folder `pem-now/` (replaces the retired app). Workflow gains a manual `clean_target` input that removes old files (guarded: only `pem-now/`, keeps App_Data, .well-known, logs) after the site is put offline.
+- HTTPS redirect and HSTS are now opt-in (`Https:Enforce=true`), so the app runs over plain HTTP until a certificate exists for the subdomain.
+- web.config: stdout logging to `.\logs` enabled for startup diagnostics; `.db`, `.db-wal`, `.db-shm` downloads blocked; App_Data and logs hidden.
+- Simulator is host-friendly: default interval 10 s and a data cap (`Simulation:MaxMovements`, default 30000) after which demo data is reset automatically.
+- Smoke test is skipped with a notice when the `SITE_URL` variable is unset.
+
 ## 1.0.1 - 2026-11-15
 
 Polish pass.

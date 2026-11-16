@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      clean_target:
+        description: 'Delete files in the server folder that are not part of this build (only allowed for pem-now/; keeps App_Data, .well-known, logs). Use for the first deploy over the retired app.'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -70,6 +75,10 @@ jobs:
               echo "::error::FTP_SERVER_DIR is unset or unsafe ('$RAW_DIR'). Refusing to deploy to the FTP account root. Set it to the site folder, e.g. inventory/"
               exit 1;;
           esac
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.clean_target }}" = "true" ] && [ "$DIR/" != "pem-now/" ]; then
+            echo "::error::clean_target is only permitted for the pem-now/ folder (got '$DIR/')."
+            exit 1
+          fi
           echo "SERVER_DIR=$DIR/" >> "$GITHUB_ENV"
           echo "Deploying to folder: $DIR/"
 
@@ -116,14 +125,23 @@ jobs:
           echo '<html><body><h1>Updating, back in a minute.</h1></body></html>' > ./offline/app_offline.htm
           lftp_run "cd \"$SERVER_DIR\" && put -O . ./offline/app_offline.htm"
 
-      # Never uses --delete: server files we did not upload (old site, .well-known, *.pfx, video.mp4) are never removed.
+      # Normal deploys never use --delete. With clean_target (manual run, pem-now/ only) the same mirror also removes
+      # server files that are not in this build, except App_Data/, .well-known/, logs/ and app_offline.htm.
       # Default `mirror -R` re-uploads every file whose size differs or whose local mtime is newer than the server's.
-      # The artifact is freshly built, so local mtimes are always newer: changed files are always overwritten.
       # (Do NOT add --ignore-time: that compares size only and would skip same-size changed files.)
       - name: Deploy site
+        env:
+          CLEAN: ${{ github.event_name == 'workflow_dispatch' && inputs.clean_target }}
         run: |
           source "$HOME/lftp-run.sh"
-          lftp_run "mirror -R --verbose --parallel=2 --no-perms --exclude-glob .well-known/ --exclude-glob '*.pfx' --exclude-glob 'App_Data/*.db*' --exclude-glob App_Data/logs/ --exclude-glob app_offline.htm ./publish/ \"$SERVER_DIR\""
+          DELETE=""
+          if [ "$CLEAN" = "true" ]; then
+            [ "$SERVER_DIR" = "pem-now/" ] || { echo "::error::Refusing --delete outside pem-now/"; exit 1; }
+            echo "clean_target: waiting 10s for the app to release file locks"
+            sleep 10
+            DELETE="--delete"
+          fi
+          lftp_run "mirror -R $DELETE --verbose --parallel=2 --no-perms --exclude-glob .well-known/ --exclude-glob '*.pfx' --exclude-glob 'App_Data/*.db*' --exclude-glob App_Data/ --exclude-glob logs/ --exclude-glob app_offline.htm ./publish/ \"$SERVER_DIR\""
 
       # Runs even when the deploy failed, so the site always comes back (old or partially updated content).
       - name: Delete app_offline.htm on server
@@ -140,10 +158,13 @@ jobs:
 
       - name: Smoke test
         env:
-          SITE_URL: ${{ vars.SITE_URL || 'https://inventory.alonsomiguel.com' }}
+          SITE_URL: ${{ vars.SITE_URL }}
         run: |
+          if [ -z "$SITE_URL" ]; then
+            echo "::notice::SITE_URL variable is not set; skipping the smoke test (no reachable hostname yet)."
+            exit 0
+          fi
           BASE="${SITE_URL%/}"
-          HOST="${BASE#https://}"; HOST="${HOST%%/*}"
           for path in /health /login; do
             ok=""
             for i in $(seq 1 12); do
@@ -154,10 +175,3 @@ jobs:
             done
             if [ -z "$ok" ]; then echo "::error::Smoke test failed for $path"; exit 1; fi
           done
-          # HTTP must redirect to HTTPS
-          read -r code loc < <(curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' --max-time 20 "http://$HOST/" || echo "000 ")
-          echo "http://$HOST/ -> $code $loc"
-          case "$code:$loc" in
-            301:https://*|308:https://*) ;;
-            *) echo "::error::http://$HOST/ does not redirect to https"; exit 1;;
-          esac

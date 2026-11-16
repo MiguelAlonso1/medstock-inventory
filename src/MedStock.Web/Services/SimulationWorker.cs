@@ -10,19 +10,37 @@ namespace MedStock.Web.Services;
 /// so dashboards update exactly as they would for human activity. Toggle via <see cref="SimulationControl"/>.
 /// </summary>
 public sealed class SimulationWorker(IDbContextFactory<MedStockDb> factory, OrderService orders, PurchasingService purchasing, TransferService transfers,
-    WriteGate gate, InventoryEventHub hub, SimulationControl control, IConfiguration cfg, TimeProvider clock, ILogger<SimulationWorker> log) : BackgroundService
+    WriteGate gate, InventoryEventHub hub, DemoSeeder seeder, SimulationControl control, IConfiguration cfg, TimeProvider clock, ILogger<SimulationWorker> log) : BackgroundService
 {
     private readonly Random _rng = new();
+    private int _ticks;
+
+    private async Task<bool> ExceedsCapAsync()
+    {
+        var cap = cfg.GetValue("Simulation:MaxMovements", 30000);
+        await using var db = await factory.CreateDbContextAsync();
+        return await db.Movements.CountAsync() > cap;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        var interval = TimeSpan.FromSeconds(Math.Max(1, cfg.GetValue("Simulation:IntervalSeconds", 4)));
+        var interval = TimeSpan.FromSeconds(Math.Max(1, cfg.GetValue("Simulation:IntervalSeconds", 10)));
         try { await Task.Delay(TimeSpan.FromSeconds(cfg.GetValue("Simulation:StartDelaySeconds", 5)), ct); } catch (OperationCanceledException) { return; }
         using var timer = new PeriodicTimer(interval);
         while (await WaitAsync(timer, ct))
         {
             if (!control.Active) continue;
-            try { await TickAsync(); }
+            try
+            {
+                // Shared-host safety: the database may not grow without bound. Past the cap, reseed from scratch.
+                if (++_ticks % 50 == 0 && await ExceedsCapAsync())
+                {
+                    log.LogInformation("Simulation data cap reached; resetting demo data");
+                    await seeder.ResetAsync("Simulator (data cap)");
+                    continue;
+                }
+                await TickAsync();
+            }
             catch (Exception ex) when (ex is not OperationCanceledException) { log.LogWarning(ex, "Simulation tick failed"); }
         }
     }

@@ -97,10 +97,12 @@ app.UseForwardedHeaders();
 if (!app.Environment.IsDevelopment())
 {
     // HTTP -> HTTPS is done here (an IIS URL Rewrite rule is not reliable on shared hosting). ACME HTTP-01 stays on plain HTTP.
+    // Opt-in (Https:Enforce=true) so the app also works on a plain-HTTP hostname until a certificate is installed.
+    var enforceHttps = app.Configuration.GetValue("Https:Enforce", false);
     app.Use((ctx, next) =>
     {
         var req = ctx.Request;
-        if (!req.IsHttps && !req.Path.StartsWithSegments("/.well-known/acme-challenge", StringComparison.OrdinalIgnoreCase))
+        if (enforceHttps && !req.IsHttps && !req.Path.StartsWithSegments("/.well-known/acme-challenge", StringComparison.OrdinalIgnoreCase))
         {
             ctx.Response.StatusCode = StatusCodes.Status301MovedPermanently;
             ctx.Response.Headers.Location = "https://" + req.Host + req.PathBase + req.Path + req.QueryString;
@@ -109,7 +111,7 @@ if (!app.Environment.IsDevelopment())
         return next();
     });
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
-    app.UseHsts();
+    if (enforceHttps) app.UseHsts();
 }
 // Friendly 404 page for browsers; API callers keep the plain status code.
 app.UseWhen(ctx => !ctx.Request.Path.StartsWithSegments("/api"),

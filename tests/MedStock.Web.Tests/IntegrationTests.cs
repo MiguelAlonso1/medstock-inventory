@@ -374,14 +374,15 @@ public class HttpsRedirectTests(WebApplicationFactory<Program> factory) : IClass
         };
     }
 
-    private HttpClient Client() => factory
+    private HttpClient Client(bool enforce = true) => factory
         .WithWebHostBuilder(b =>
         {
             b.UseEnvironment("Production");
             b.ConfigureAppConfiguration((_, c) => c.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:Default"] = $"Data Source={Path.Combine(Path.GetTempPath(), "medstock-https-test.db")}",
-                ["Simulation:Enabled"] = "false"
+                ["Simulation:Enabled"] = "false",
+                ["Https:Enforce"] = enforce ? "true" : "false"
             }));
             b.ConfigureServices(s => s.AddTransient<IStartupFilter, LoopbackFilter>());
         })
@@ -393,6 +394,13 @@ public class HttpsRedirectTests(WebApplicationFactory<Program> factory) : IClass
         var res = await Client().GetAsync("/inventory?x=1");
         Assert.Equal(HttpStatusCode.MovedPermanently, res.StatusCode);
         Assert.Equal("https://inventory.alonsomiguel.com/inventory?x=1", res.Headers.Location?.OriginalString);
+    }
+
+    [Fact]
+    public async Task Http_IsServedWhenEnforcementIsOff()
+    {
+        var res = await Client(enforce: false).GetAsync("/health");
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
     }
 
     [Fact]
