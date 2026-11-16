@@ -160,3 +160,8 @@ img { max-width: 100%; }
     .inv-grid .lot-drill .mud-table-container { overflow-x: auto; }
 }
 .inv-grid .mud-table-head .mud-table-cell, .inv-grid .num { white-space: nowrap; }
+
+/* Master data pages: keep the action button on the right of the title block */
+.manage-head > div:first-child { flex: 1 1 280px; min-width: 0; }
+.manage-toolbar .mud-input-control { min-width: 220px; }
+.manage-grid .nowrap, .manage-grid .mud-table-head .mud-table-cell { white-space: nowrap; }

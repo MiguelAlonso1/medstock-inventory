@@ -62,7 +62,7 @@
 
     private async Task Advance(int id)
     {
-        var r = await OrderSvc.AdvanceAsync(id, Actor);
+        var r = await OrderSvc.AdvanceAsync(id, Me);
         Snack.Add(r.Ok ? $"{r.Value!.Number} is now {r.Value.Status}" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
         await LoadAsync();
     }

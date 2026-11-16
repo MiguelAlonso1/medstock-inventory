@@ -1,0 +1,50 @@
+@inject MasterDataService Svc
+
+<MudDialog>
+    <TitleContent><MudText Typo="Typo.h6">@(Model.Id == 0 ? "New supplier" : "Edit supplier")</MudText></TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_valid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12"><MudTextField T="string" Value="_m.Name" ValueChanged="@(v => _m = _m with { Name = v ?? "" })" Label="Name" Variant="Variant.Outlined" Required="true" RequiredError="Name is required" MaxLength="120" /></MudItem>
+                <MudItem xs="7"><MudTextField T="string" Value="_m.Country" ValueChanged="@(v => _m = _m with { Country = v ?? "" })" Label="Country" Variant="Variant.Outlined" Required="true" RequiredError="Country is required" MaxLength="60" /></MudItem>
+                <MudItem xs="5"><MudNumericField T="int" Value="_m.LeadTimeDays" ValueChanged="@(v => _m = _m with { LeadTimeDays = v })" Label="Lead time (days)" Variant="Variant.Outlined" Min="0" Max="365"
+                                                 Validation="@((Func<int, string?>)(v => v is < 0 or > 365 ? "0 to 365 days" : null))" /></MudItem>
+            </MudGrid>
+        </MudForm>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@_error</MudAlert> }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save" Disabled="_busy" StartIcon="@Icons.Material.Rounded.Check">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public SupplierInput Model { get; set; } = default!;
+    [Parameter] public Caller Me { get; set; } = default!;
+
+    private MudForm _form = default!;
+    private bool _valid, _busy;
+    private string? _error;
+    private SupplierInput _m = default!;
+
+    protected override void OnInitialized() => _m = Model;
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Save()
+    {
+        _error = null;
+        await _form.ValidateAsync();
+        if (!_valid) return;
+        _busy = true;
+        try
+        {
+            var r = await Svc.SaveSupplierAsync(_m, Me);
+            if (r.Ok) MudDialog.Close(DialogResult.Ok(r.Value));
+            else _error = r.Error;
+        }
+        finally { _busy = false; }
+    }
+}

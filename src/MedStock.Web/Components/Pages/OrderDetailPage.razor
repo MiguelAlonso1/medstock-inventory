@@ -3,6 +3,8 @@
 @inherits LiveComponentBase
 @inject OrderService OrderSvc
 @inject ISnackbar Snack
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
 
 <PageTitle>@(_o?.Number ?? "Order") - MedStock</PageTitle>
 
@@ -30,6 +32,14 @@ else
             @if (CanManage && _o.HasShortfall && _o.Status is OrderStatus.Pending or OrderStatus.Allocated)
             {
                 <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="Reallocate" StartIcon="@Icons.Material.Rounded.Refresh">Retry allocation</MudButton>
+            }
+            @if (CanManage && OrderEditRules.CanEditLines(_o.Status))
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="EditLines" StartIcon="@Icons.Material.Rounded.Edit">Edit lines</MudButton>
+            }
+            @if (IsAdmin && _o.Status == OrderStatus.Cancelled)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="DeleteOrder" StartIcon="@Icons.Material.Rounded.DeleteOutline">Delete order</MudButton>
             }
             @if (CanManage && OrderWorkflow.IsOpen(_o.Status))
             {
@@ -85,21 +95,40 @@ else
 
     private async Task Advance()
     {
-        var r = await OrderSvc.AdvanceAsync(Id, Actor);
+        var r = await OrderSvc.AdvanceAsync(Id, Me);
         Snack.Add(r.Ok ? $"Order is now {r.Value!.Status}" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
         await LoadAsync();
     }
 
     private async Task Reallocate()
     {
-        var r = await OrderSvc.ReallocateAsync(Id, Actor);
+        var r = await OrderSvc.ReallocateAsync(Id, Me);
         Snack.Add(r.Ok ? "Allocation updated" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
         await LoadAsync();
     }
 
+    private async Task EditLines()
+    {
+        var parameters = new DialogParameters<OrderLinesDialog> { { d => d.Order, _o! }, { d => d.Me, Me } };
+        var dlg = await Dialogs.ShowAsync<OrderLinesDialog>(null, parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        var res = await dlg.Result;
+        if (res is { Canceled: false }) { Snack.Add("Order updated and re-allocated", Severity.Success); await LoadAsync(); }
+    }
+
+    private async Task DeleteOrder()
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync($"Delete {_o!.Number}?", "This permanently removes the cancelled order. It never moved stock.", yesText: "Delete", cancelText: "Keep");
+        if (ok != true) return;
+        var r = await OrderSvc.DeleteAsync(Id, Me);
+        if (r.Ok) { Snack.Add("Order deleted", Severity.Success); Nav.NavigateTo("/orders"); }
+        else Snack.Add(r.Error!, Severity.Error);
+    }
+
     private async Task Cancel()
     {
-        var r = await OrderSvc.CancelAsync(Id, Actor);
+        var ok = await Dialogs.ShowMessageBoxAsync($"Cancel {_o!.Number}?", "Reserved stock is released. The order stays in the list as Cancelled.", yesText: "Cancel order", cancelText: "Keep order");
+        if (ok != true) return;
+        var r = await OrderSvc.CancelAsync(Id, Me);
         Snack.Add(r.Ok ? "Order cancelled, stock released" : r.Error!, r.Ok ? Severity.Info : Severity.Error);
         await LoadAsync();
     }

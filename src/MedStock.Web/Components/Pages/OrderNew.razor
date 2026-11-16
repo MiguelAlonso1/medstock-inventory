@@ -118,7 +118,7 @@
         _busy = true;
         try
         {
-            var res = await OrderSvc.CreateAsync(new NewOrderRequest(_customerId ?? 0, _warehouseId ?? 0, _lines.Select(l => new NewOrderLine(l.Product!.Id, l.Quantity)).ToList()), Actor);
+            var res = await OrderSvc.CreateAsync(new NewOrderRequest(_customerId ?? 0, _warehouseId ?? 0, _lines.Select(l => new NewOrderLine(l.Product!.Id, l.Quantity)).ToList()), Me);
             if (res.Ok)
             {
                 _result = res.Value;

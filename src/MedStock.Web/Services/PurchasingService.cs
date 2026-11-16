@@ -26,7 +26,7 @@ public sealed class PurchasingService(IDbContextFactory<MedStockDb> factory, Wri
         var onOrder = await db.PurchaseOrderLines
             .Where(l => l.PurchaseOrder!.Status == PurchaseOrderStatus.Ordered || l.PurchaseOrder.Status == PurchaseOrderStatus.PartiallyReceived)
             .GroupBy(l => l.ProductId).Select(g => new { g.Key, Qty = g.Sum(l => l.QtyOrdered - l.QtyReceived) }).ToDictionaryAsync(x => x.Key, x => x.Qty);
-        var products = await db.Products.AsNoTracking().Include(p => p.Supplier).ToListAsync();
+        var products = await db.Products.AsNoTracking().Include(p => p.Supplier).Where(p => p.IsActive && p.Supplier!.IsActive).ToListAsync();
 
         var list = new List<ReorderSuggestion>();
         foreach (var p in products)
@@ -42,15 +42,20 @@ public sealed class PurchasingService(IDbContextFactory<MedStockDb> factory, Wri
     }
 
     /// <summary>Creates one PO per supplier for the chosen lines, delivering to the given warehouse.</summary>
-    public Task<OpResult<IReadOnlyList<string>>> CreatePurchaseOrdersAsync(IReadOnlyList<NewOrderLine> lines, int warehouseId, string actor) => gate.RunAsync(async () =>
+    public Task<OpResult<IReadOnlyList<string>>> CreatePurchaseOrdersAsync(IReadOnlyList<NewOrderLine> lines, int warehouseId, Caller caller) => gate.RunAsync(async () =>
     {
+        if (!caller.CanManage) return OpResult<IReadOnlyList<string>>.Fail(Caller.DeniedManage);
+        var actor = caller.Name;
         await using var db = await factory.CreateDbContextAsync();
         var wh = await db.Warehouses.FindAsync(warehouseId);
         if (wh is null) return OpResult<IReadOnlyList<string>>.Fail("Choose a receiving warehouse.");
+        if (!wh.IsActive) return OpResult<IReadOnlyList<string>>.Fail($"{wh.Name} is inactive.");
         if (lines.Count == 0 || lines.Any(l => l.Quantity <= 0)) return OpResult<IReadOnlyList<string>>.Fail("Select at least one line with a positive quantity.");
         var ids = lines.Select(l => l.ProductId).Distinct().ToList();
         var products = await db.Products.Where(p => ids.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
         if (products.Count != ids.Count) return OpResult<IReadOnlyList<string>>.Fail("Unknown product in the selection.");
+        var inactive = products.Values.FirstOrDefault(p => !p.IsActive);
+        if (inactive is not null) return OpResult<IReadOnlyList<string>>.Fail($"{inactive.Name} is inactive and cannot be ordered.");
         var cold = products.Values.FirstOrDefault(p => p.ColdChain);
         if (cold is not null && !wh.ColdChainCapable)
             return OpResult<IReadOnlyList<string>>.Fail($"{cold.Name} is cold-chain; {wh.Name} cannot receive it.");
@@ -82,8 +87,10 @@ public sealed class PurchasingService(IDbContextFactory<MedStockDb> factory, Wri
         return OpResult<IReadOnlyList<string>>.Success(created.Select(p => p.Number).ToList());
     });
 
-    public Task<OpResult<PurchaseOrderView>> ReceiveAsync(int poId, string actor, IReadOnlyList<ReceiptLine>? receipt = null) => gate.RunAsync(async () =>
+    public Task<OpResult<PurchaseOrderView>> ReceiveAsync(int poId, Caller caller, IReadOnlyList<ReceiptLine>? receipt = null) => gate.RunAsync(async () =>
     {
+        if (!caller.CanManage) return OpResult<PurchaseOrderView>.Fail(Caller.DeniedManage);
+        var actor = caller.Name;
         try
         {
             await using var db = await factory.CreateDbContextAsync();
@@ -129,6 +136,91 @@ public sealed class PurchasingService(IDbContextFactory<MedStockDb> factory, Wri
             return OpResult<PurchaseOrderView>.Success(ToView(po));
         }
         catch (DomainException ex) { return OpResult<PurchaseOrderView>.Fail(ex.Message); }
+    });
+
+    /// <summary>Cancels a purchase order that has not received anything yet. No stock is involved, so no movements are written.</summary>
+    public Task<OpResult> CancelAsync(int poId, Caller caller) => gate.RunAsync(async () =>
+    {
+        if (!caller.CanManage) return OpResult.Fail(Caller.DeniedManage);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync();
+            var po = await db.PurchaseOrders.Include(p => p.Supplier).Include(p => p.Lines).FirstOrDefaultAsync(p => p.Id == poId);
+            if (po is null) return OpResult.Fail("Purchase order not found.");
+            PurchaseOrderRules.EnsureCanCancel(po.Status);
+            if (po.Lines.Any(l => l.QtyReceived > 0)) return OpResult.Fail("This purchase order already received stock and cannot be cancelled.");
+            po.Status = PurchaseOrderStatus.Cancelled;
+            await db.SaveChangesAsync();
+            hub.Publish(ActivityKind.Receipt, $"{po.Number} to {po.Supplier!.Name} cancelled by {caller.Name}", Topic.Purchasing | Topic.Alerts, "warning");
+            return OpResult.Success();
+        }
+        catch (DomainException ex) { return OpResult.Fail(ex.Message); }
+    });
+
+    /// <summary>Changes ordered quantities (line id to new quantity) and optionally the expected date, before the order is fully received.</summary>
+    public Task<OpResult<PurchaseOrderView>> UpdateQuantitiesAsync(int poId, IReadOnlyDictionary<int, int> newQuantities, DateOnly? expected, Caller caller) => gate.RunAsync(async () =>
+    {
+        if (!caller.CanManage) return OpResult<PurchaseOrderView>.Fail(Caller.DeniedManage);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync();
+            var po = await db.PurchaseOrders.Include(p => p.Warehouse).Include(p => p.Supplier)
+                .Include(p => p.Lines).ThenInclude(l => l.Product).FirstOrDefaultAsync(p => p.Id == poId);
+            if (po is null) return OpResult<PurchaseOrderView>.Fail("Purchase order not found.");
+            var outcome = PurchaseOrderRules.ApplyEdit(po.Status, po.Lines.Select(l => new PoLine(l.Id, l.QtyOrdered, l.QtyReceived)).ToList(), newQuantities);
+            foreach (var u in outcome.Lines) po.Lines.First(l => l.Id == u.LineId).QtyOrdered = u.Ordered;
+            if (expected is { } d) po.ExpectedDate = d;
+            if (outcome.Status != po.Status)
+            {
+                po.Status = outcome.Status;
+                if (outcome.Status == PurchaseOrderStatus.Received) po.ReceivedUtc = clock.GetUtcNow().UtcDateTime;
+            }
+            await db.SaveChangesAsync();
+            hub.Publish(ActivityKind.Receipt, $"{po.Number} edited by {caller.Name}: now {po.Lines.Sum(l => l.QtyOrdered)} units ordered", Topic.Purchasing | Topic.Alerts);
+            return OpResult<PurchaseOrderView>.Success(ToView(po));
+        }
+        catch (DomainException ex) { return OpResult<PurchaseOrderView>.Fail(ex.Message); }
+    });
+
+    /// <summary>Creates one purchase order by hand: supplier, receiving warehouse and lines (products must belong to the supplier).</summary>
+    public Task<OpResult<string>> CreateManualAsync(int supplierId, int warehouseId, DateOnly? expected, IReadOnlyList<NewOrderLine> lines, Caller caller) => gate.RunAsync(async () =>
+    {
+        if (!caller.CanManage) return OpResult<string>.Fail(Caller.DeniedManage);
+        await using var db = await factory.CreateDbContextAsync();
+        var sup = await db.Suppliers.FindAsync(supplierId);
+        var wh = await db.Warehouses.FindAsync(warehouseId);
+        if (sup is null) return OpResult<string>.Fail("Choose a supplier.");
+        if (wh is null) return OpResult<string>.Fail("Choose a receiving warehouse.");
+        if (!sup.IsActive) return OpResult<string>.Fail($"{sup.Name} is inactive.");
+        if (!wh.IsActive) return OpResult<string>.Fail($"{wh.Name} is inactive.");
+        if (lines.Count == 0) return OpResult<string>.Fail("Add at least one line.");
+        if (lines.Any(l => l.Quantity <= 0)) return OpResult<string>.Fail("Quantities must be positive.");
+        var merged = lines.GroupBy(l => l.ProductId).Select(g => new NewOrderLine(g.Key, g.Sum(x => x.Quantity))).ToList();
+        var ids = merged.Select(m => m.ProductId).ToList();
+        var products = await db.Products.Where(p => ids.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
+        if (products.Count != merged.Count) return OpResult<string>.Fail("Unknown product in the lines.");
+        var inactive = products.Values.FirstOrDefault(p => !p.IsActive);
+        if (inactive is not null) return OpResult<string>.Fail($"{inactive.Name} is inactive and cannot be ordered.");
+        var wrong = products.Values.FirstOrDefault(p => p.SupplierId != sup.Id);
+        if (wrong is not null) return OpResult<string>.Fail($"{wrong.Name} is not supplied by {sup.Name}.");
+        var cold = products.Values.FirstOrDefault(p => p.ColdChain);
+        if (cold is not null && !wh.ColdChainCapable) return OpResult<string>.Fail($"{cold.Name} is cold-chain; {wh.Name} cannot receive it.");
+
+        var now = clock.GetUtcNow().UtcDateTime;
+        var due = expected ?? Today.AddDays(sup.LeadTimeDays);
+        if (due < Today) return OpResult<string>.Fail("The expected date cannot be in the past.");
+        var po = new PurchaseOrder
+        {
+            Number = "PENDING", SupplierId = sup.Id, WarehouseId = wh.Id, Status = PurchaseOrderStatus.Ordered, CreatedUtc = now,
+            ExpectedDate = due, CreatedBy = caller.Name,
+            Lines = merged.Select(m => new PurchaseOrderLine { ProductId = m.ProductId, QtyOrdered = m.Quantity, UnitCost = products[m.ProductId].UnitCost }).ToList()
+        };
+        db.PurchaseOrders.Add(po);
+        await db.SaveChangesAsync();
+        po.Number = $"PO-{po.Id + 5000:D5}";
+        await db.SaveChangesAsync();
+        hub.Publish(ActivityKind.Receipt, $"{po.Number} created manually by {caller.Name} for {sup.Name} ({po.Lines.Sum(l => l.QtyOrdered)} units, due {po.ExpectedDate:MMM d})", Topic.Purchasing | Topic.Alerts);
+        return OpResult<string>.Success(po.Number);
     });
 
     private static async Task<string> UniqueLotNumberAsync(MedStockDb db, int productId, string candidate)

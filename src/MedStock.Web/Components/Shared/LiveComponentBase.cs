@@ -18,6 +18,8 @@ public abstract class LiveComponentBase : ComponentBase, IDisposable
     [CascadingParameter] private Task<AuthenticationState>? AuthTask { get; set; }
 
     protected string Actor { get; private set; } = "unknown";
+    /// <summary>The signed-in user as a service caller (name plus role flags the services enforce).</summary>
+    protected Caller Me { get; private set; } = new("unknown", false, false, false);
     protected bool CanManage { get; private set; }
     protected bool CanFulfill { get; private set; }
     protected bool IsAdmin { get; private set; }
@@ -32,7 +34,8 @@ public abstract class LiveComponentBase : ComponentBase, IDisposable
         if (AuthTask is not null)
         {
             var u = (await AuthTask).User;
-            Actor = u.FindFirstValue("display_name") ?? u.Identity?.Name ?? "unknown";
+            Me = Caller.From(u);
+            Actor = Me.Name;
             IsAdmin = u.IsInRole(Roles.Admin);
             CanManage = IsAdmin || u.IsInRole(Roles.WarehouseManager);
             CanFulfill = CanManage || u.IsInRole(Roles.Picker);

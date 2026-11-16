@@ -31,7 +31,7 @@ public sealed record ExpiryAlert(int ProductId, string Sku, string Name, string 
 public sealed record ExcursionRow(int Id, string Warehouse, string Zone, double ReadingC, DateTime RecordedUtc, string? AcknowledgedBy, DateTime? AcknowledgedUtc);
 public sealed record AlertSummary(int LowStock, int Expiring, int Expired, int ColdChain);
 
-public sealed record Lookups(IReadOnlyList<Warehouse> Warehouses, IReadOnlyList<Customer> Customers, IReadOnlyList<string> Categories);
+public sealed record Lookups(IReadOnlyList<Warehouse> Warehouses, IReadOnlyList<Customer> Customers, IReadOnlyList<string> Categories, IReadOnlyList<Supplier> Suppliers);
 public sealed record ProductOption(int Id, string Sku, string Name, bool ColdChain)
 {
     public override string ToString() => $"{Name} ({Sku})";
@@ -45,15 +45,17 @@ public sealed class InventoryQueries(IDbContextFactory<MedStockDb> factory, Writ
     {
         await using var db = await factory.CreateDbContextAsync();
         return new Lookups(
-            await db.Warehouses.AsNoTracking().OrderBy(w => w.Code).ToListAsync(),
-            await db.Customers.AsNoTracking().OrderBy(c => c.Name).ToListAsync(),
-            await db.Products.Select(p => p.Category).Distinct().OrderBy(c => c).ToListAsync());
+            await db.Warehouses.AsNoTracking().Where(w => w.IsActive).OrderBy(w => w.Code).ToListAsync(),
+            await db.Customers.AsNoTracking().Where(c => c.IsActive).OrderBy(c => c.Name).ToListAsync(),
+            await db.Products.Select(p => p.Category).Distinct().OrderBy(c => c).ToListAsync(),
+            await db.Suppliers.AsNoTracking().Where(s => s.IsActive).OrderBy(s => s.Name).ToListAsync());
     }
 
-    public async Task<IReadOnlyList<ProductOption>> SearchProductsAsync(string? term, int take = 25)
+    public async Task<IReadOnlyList<ProductOption>> SearchProductsAsync(string? term, int take = 25, int? supplierId = null)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var q = db.Products.AsNoTracking().AsQueryable();
+        var q = db.Products.AsNoTracking().Where(p => p.IsActive);
+        if (supplierId is { } sid) q = q.Where(p => p.SupplierId == sid);
         if (!string.IsNullOrWhiteSpace(term)) q = q.Where(p => p.Name.Contains(term) || p.Sku.Contains(term));
         return await q.OrderBy(p => p.Name).Take(take).Select(p => new ProductOption(p.Id, p.Sku, p.Name, p.ColdChain)).ToListAsync();
     }
@@ -64,10 +66,10 @@ public sealed class InventoryQueries(IDbContextFactory<MedStockDb> factory, Writ
         var today = Today;
         var value = await db.StockLevels.SumAsync(s => (double?)(s.Quantity * s.Product!.UnitCost)) ?? 0;
         var units = await db.StockLevels.SumAsync(s => (long?)s.Quantity) ?? 0;
-        var skus = await db.Products.CountAsync();
+        var skus = await db.Products.CountAsync(p => p.IsActive);
 
         var avail = await db.StockLevels.GroupBy(s => s.ProductId).Select(g => new { g.Key, A = g.Sum(s => s.Quantity - s.Allocated) }).ToDictionaryAsync(x => x.Key, x => x.A);
-        var mins = await db.Products.Select(p => new { p.Id, p.MinLevel }).ToListAsync();
+        var mins = await db.Products.Where(p => p.IsActive).Select(p => new { p.Id, p.MinLevel }).ToListAsync();
         var low = mins.Count(m => avail.GetValueOrDefault(m.Id) <= m.MinLevel);
 
         async Task<int> Within(int days)
@@ -217,7 +219,7 @@ public sealed class InventoryQueries(IDbContextFactory<MedStockDb> factory, Writ
         var avail = await db.StockLevels.GroupBy(s => s.ProductId).Select(g => new { g.Key, A = g.Sum(s => s.Quantity - s.Allocated) }).ToDictionaryAsync(x => x.Key, x => x.A);
         var onOrder = await db.PurchaseOrderLines.Where(l => l.PurchaseOrder!.Status == PurchaseOrderStatus.Ordered || l.PurchaseOrder.Status == PurchaseOrderStatus.PartiallyReceived)
             .GroupBy(l => l.ProductId).Select(g => new { g.Key, Q = g.Sum(l => l.QtyOrdered - l.QtyReceived) }).ToDictionaryAsync(x => x.Key, x => x.Q);
-        var products = await db.Products.AsNoTracking().ToListAsync();
+        var products = await db.Products.AsNoTracking().Where(p => p.IsActive).ToListAsync();
         return products.Where(p => avail.GetValueOrDefault(p.Id) <= p.MinLevel)
             .Select(p => new LowStockAlert(p.Id, p.Sku, p.Name, p.ColdChain, avail.GetValueOrDefault(p.Id), p.MinLevel, p.MaxLevel, onOrder.GetValueOrDefault(p.Id)))
             .OrderBy(a => a.Available / (double)Math.Max(1, a.Min)).Take(300).ToList();

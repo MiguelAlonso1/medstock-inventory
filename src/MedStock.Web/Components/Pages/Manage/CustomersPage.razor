@@ -1,0 +1,82 @@
+@page "/manage/customers"
+@attribute [Authorize(Roles = Roles.ManageRoles)]
+@inherits LiveComponentBase
+@inject MasterDataService Svc
+@inject IDialogService Dialogs
+@inject ISnackbar Snack
+
+<PageTitle>Customers - MedStock</PageTitle>
+
+<div class="page-head manage-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Customers</MudText>
+        <MudText Color="Color.Secondary">Hospitals, clinics and pharmacies that order stock. A customer with orders cannot be deleted; deactivate it instead.</MudText>
+    </div>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => OpenAsync(null)">New customer</MudButton>
+</div>
+
+<MudPaper Elevation="0" Class="panel">
+    <div class="d-flex flex-wrap align-center gap-3 pa-3 manage-toolbar">
+        <MudTextField T="string" @bind-Value="_search" Placeholder="Search customers" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search" Class="flex-grow-1" aria-label="Search customers" />
+        <MudSwitch T="bool" @bind-Value="_showInactive" Color="Color.Primary" Label="Show inactive" />
+    </div>
+    <MudDataGrid T="Customer" Items="Visible" QuickFilter="Match" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm" SortMode="SortMode.Multiple" Filterable="false" ReadOnly="true" Class="manage-grid">
+        <Columns>
+            <PropertyColumn Property="x => x.Name" Title="Name" CellStyle="min-width:220px" />
+            <PropertyColumn Property="x => x.City" Title="City" />
+            <TemplateColumn Title="Status" SortBy="@(x => x.IsActive)">
+                <CellTemplate><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@(context.Item.IsActive ? Color.Success : Color.Default)" Class="my-0">@(context.Item.IsActive ? "Active" : "Inactive")</MudChip></CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="" Sortable="false" CellClass="text-right">
+                <CellTemplate>
+                    <div class="d-flex justify-end">
+                        <MudIconButton Icon="@Icons.Material.Rounded.Edit" OnClick="() => OpenAsync(context.Item)" aria-label="@($"Edit {Label(context.Item)}")" />
+                        <MudIconButton Icon="@(context.Item.IsActive ? Icons.Material.Rounded.VisibilityOff : Icons.Material.Rounded.Visibility)" OnClick="() => ToggleAsync(context.Item)"
+                                       aria-label="@($"{(context.Item.IsActive ? "Deactivate" : "Reactivate")} {Label(context.Item)}")" />
+                        <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Color="Color.Error" OnClick="() => DeleteAsync(context.Item)" aria-label="@($"Delete {Label(context.Item)}")" />
+                    </div>
+                </CellTemplate>
+            </TemplateColumn>
+        </Columns>
+        <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">No customers match.</MudText></NoRecordsContent>
+        <PagerContent><MudDataGridPager T="Customer" PageSizeOptions="@(new[] { 10, 25, 50 })" /></PagerContent>
+    </MudDataGrid>
+</MudPaper>
+
+@code {
+    private IReadOnlyList<Customer> _all = [];
+    private string? _search;
+    private bool _showInactive = true;
+
+    protected override Topic Topics => Topic.Master;
+
+    private IEnumerable<Customer> Visible => _showInactive ? _all : _all.Where(x => x.IsActive);
+
+    protected override async Task LoadAsync() => _all = await Svc.ListCustomersAsync();
+
+    private static string Label(Customer x) => x.Name;
+
+    private bool Match(Customer x) => string.IsNullOrWhiteSpace(_search) || x.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) || x.City.Contains(_search, StringComparison.OrdinalIgnoreCase);
+
+    private async Task OpenAsync(Customer? x)
+    {
+        var model = x is null ? new CustomerInput(0, "", "") : new CustomerInput(x.Id, x.Name, x.City);
+        var parameters = new DialogParameters<CustomerDialog> { { d => d.Model, model }, { d => d.Me, Me } };
+        var dlg = await Dialogs.ShowAsync<CustomerDialog>(null, parameters, MasterFlows.Options);
+        var res = await dlg.Result;
+        if (res is { Canceled: false }) { Snack.Add(x is null ? "Customer created" : "Customer updated", Severity.Success); await RefreshAsync(); }
+    }
+
+    private async Task ToggleAsync(Customer x)
+    {
+        await MasterFlows.SetActiveAsync(Snack, Svc, MasterKind.Customer, x.Id, Label(x), !x.IsActive, Me);
+        await RefreshAsync();
+    }
+
+    private async Task DeleteAsync(Customer x)
+    {
+        await MasterFlows.DeleteAsync(Dialogs, Snack, Svc, MasterKind.Customer, x.Id, Label(x), Me);
+        await RefreshAsync();
+    }
+}

@@ -1,0 +1,108 @@
+@page "/manage/products"
+@attribute [Authorize(Roles = Roles.ManageRoles)]
+@inherits LiveComponentBase
+@inject MasterDataService Svc
+@inject InventoryQueries Queries
+@inject IDialogService Dialogs
+@inject ISnackbar Snack
+
+<PageTitle>Products - MedStock</PageTitle>
+
+<div class="page-head manage-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Products</MudText>
+        <MudText Color="Color.Secondary">Create, edit and retire catalogue items. Products with history cannot be deleted; deactivate them instead.</MudText>
+    </div>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => OpenAsync(null)">New product</MudButton>
+</div>
+
+<MudPaper Elevation="0" Class="panel">
+    <div class="d-flex flex-wrap align-center gap-3 pa-3 manage-toolbar">
+        <MudTextField T="string" @bind-Value="_search" Placeholder="Search SKU, name, category, NDC" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search" Class="flex-grow-1" aria-label="Search products" />
+        <MudSwitch T="bool" @bind-Value="_showInactive" Color="Color.Primary" Label="Show inactive" />
+    </div>
+    <MudDataGrid T="Product" Items="Visible" QuickFilter="Match" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm" FixedHeader="true" Height="calc(100vh - 400px)"
+                 SortMode="SortMode.Multiple" Filterable="false" ReadOnly="true" Class="manage-grid">
+        <Columns>
+            <PropertyColumn Property="x => x.Sku" Title="SKU" CellClass="nowrap" />
+            <PropertyColumn Property="x => x.Name" Title="Product">
+                <CellTemplate>
+                    <div class="min-w-0">
+                        <span class="font-weight-semibold">@context.Item.Name</span>
+                        @if (context.Item.ColdChain) { <MudIcon Icon="@Icons.Material.Rounded.AcUnit" Size="Size.Small" Color="Color.Info" Class="ml-1" title="Cold chain" /> }
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="d-block">@context.Item.Category &middot; per @context.Item.Unit</MudText>
+                    </div>
+                </CellTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.UnitCost" Title="Cost" Format="C2" CellClass="nowrap" />
+            <TemplateColumn Title="Min/Max" SortBy="@(x => x.MinLevel)" CellClass="nowrap"><CellTemplate><span class="num">@context.Item.MinLevel / @context.Item.MaxLevel</span></CellTemplate></TemplateColumn>
+            <PropertyColumn Property="x => x.Supplier!.Name" Title="Supplier" />
+            <TemplateColumn Title="Status" SortBy="@(x => x.IsActive)">
+                <CellTemplate><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@(context.Item.IsActive ? Color.Success : Color.Default)" Class="my-0">@(context.Item.IsActive ? "Active" : "Inactive")</MudChip></CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="" Sortable="false" CellClass="text-right">
+                <CellTemplate>
+                    <div class="d-flex justify-end">
+                        <MudIconButton Icon="@Icons.Material.Rounded.Edit" OnClick="() => OpenAsync(context.Item)" aria-label="@($"Edit {context.Item.Sku}")" />
+                        <MudIconButton Icon="@(context.Item.IsActive ? Icons.Material.Rounded.VisibilityOff : Icons.Material.Rounded.Visibility)" OnClick="() => ToggleAsync(context.Item)"
+                                       aria-label="@($"{(context.Item.IsActive ? "Deactivate" : "Reactivate")} {context.Item.Sku}")" />
+                        <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Color="Color.Error" OnClick="() => DeleteAsync(context.Item)" aria-label="@($"Delete {context.Item.Sku}")" />
+                    </div>
+                </CellTemplate>
+            </TemplateColumn>
+        </Columns>
+        <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">No products match.</MudText></NoRecordsContent>
+        <PagerContent><MudDataGridPager T="Product" PageSizeOptions="@(new[] { 25, 50, 100 })" /></PagerContent>
+    </MudDataGrid>
+</MudPaper>
+
+@code {
+    private IReadOnlyList<Product> _all = [];
+    private Lookups? _lookups;
+    private string? _search;
+    private bool _showInactive = true;
+
+    protected override Topic Topics => Topic.Master;
+
+    private IEnumerable<Product> Visible => _showInactive ? _all : _all.Where(p => p.IsActive);
+
+    protected override async Task LoadAsync()
+    {
+        _all = await Svc.ListProductsAsync();
+        _lookups = await Queries.GetLookupsAsync();
+    }
+
+    private bool Match(Product p) => string.IsNullOrWhiteSpace(_search)
+        || p.Sku.Contains(_search, StringComparison.OrdinalIgnoreCase) || p.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)
+        || p.Category.Contains(_search, StringComparison.OrdinalIgnoreCase) || p.NdcCode.Contains(_search, StringComparison.OrdinalIgnoreCase);
+
+    private async Task OpenAsync(Product? p)
+    {
+        var model = p is null
+            ? new ProductInput(0, "", "", "", "", "each", false, 0, 10, 50, 1, 24, 0, _lookups?.Suppliers.FirstOrDefault()?.Id ?? 0)
+            : new ProductInput(p.Id, p.Sku, p.Name, p.NdcCode, p.Category, p.Unit, p.ColdChain, p.UnitCost, p.MinLevel, p.MaxLevel, p.PackSize, p.ShelfLifeMonths, p.AvgDailyDemand, p.SupplierId);
+        // an inactive supplier must stay selectable for products that already use it
+        var suppliers = (_lookups?.Suppliers ?? []).ToList();
+        if (p?.Supplier is { IsActive: false } s) suppliers.Add(s);
+        var parameters = new DialogParameters<ProductDialog>
+        {
+            { x => x.Model, model }, { x => x.Suppliers, suppliers }, { x => x.Categories, _lookups?.Categories ?? [] }, { x => x.Me, Me }
+        };
+        var dlg = await Dialogs.ShowAsync<ProductDialog>(null, parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        var res = await dlg.Result;
+        if (res is { Canceled: false }) { Snack.Add(p is null ? "Product created" : "Product updated", Severity.Success); await RefreshAsync(); }
+    }
+
+    private async Task ToggleAsync(Product p)
+    {
+        await MasterFlows.SetActiveAsync(Snack, Svc, MasterKind.Product, p.Id, p.Sku, !p.IsActive, Me);
+        await RefreshAsync();
+    }
+
+    private async Task DeleteAsync(Product p)
+    {
+        await MasterFlows.DeleteAsync(Dialogs, Snack, Svc, MasterKind.Product, p.Id, p.Sku, Me);
+        await RefreshAsync();
+    }
+}

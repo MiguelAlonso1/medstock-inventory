@@ -4,6 +4,7 @@
 @inject InventoryQueries Queries
 @inject TransferService TransferSvc
 @inject ISnackbar Snack
+@inject IDialogService Dialogs
 
 <PageTitle>Transfers - MedStock</PageTitle>
 
@@ -43,7 +44,7 @@
         <MudPaper Elevation="0" Class="panel">
             <MudTable Items="_recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="0">
                 <ToolBarContent><MudText Typo="Typo.h6">Recent transfers</MudText></ToolBarContent>
-                <HeaderContent><MudTh>Transfer</MudTh><MudTh>Product</MudTh><MudTh>Lot</MudTh><MudTh>Route</MudTh><MudTh>Qty</MudTh><MudTh>When</MudTh></HeaderContent>
+                <HeaderContent><MudTh>Transfer</MudTh><MudTh>Product</MudTh><MudTh>Lot</MudTh><MudTh>Route</MudTh><MudTh>Qty</MudTh><MudTh>When</MudTh><MudTh></MudTh></HeaderContent>
                 <RowTemplate>
                     <MudTd DataLabel="Transfer">@context.Number</MudTd>
                     <MudTd DataLabel="Product">@context.Product</MudTd>
@@ -51,6 +52,16 @@
                     <MudTd DataLabel="Route">@context.From &rarr; @context.To</MudTd>
                     <MudTd DataLabel="Qty"><span class="num">@context.Quantity</span></MudTd>
                     <MudTd DataLabel="When">@context.CreatedUtc.ToLocalTime().ToString("MMM d HH:mm")</MudTd>
+                    <MudTd Class="text-right">
+                        @if (context.Reversed)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default" Class="my-0">Reversed</MudChip>
+                        }
+                        else if (CanManage)
+                        {
+                            <MudTooltip Text="Reverse this transfer"><MudIconButton Icon="@Icons.Material.Rounded.Undo" Color="Color.Warning" OnClick="() => Reverse(context)" aria-label="@($"Reverse {context.Number}")" /></MudTooltip>
+                        }
+                    </MudTd>
                 </RowTemplate>
                 <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">No transfers yet.</MudText></NoRecordsContent>
             </MudTable>
@@ -84,6 +95,15 @@
     private async Task OnFrom(int? id) { _from = id; _lotId = null; await RefreshLots(); }
     private async Task RefreshLots() => _lots = _product is null || _from is null ? [] : await TransferSvc.GetLotsAsync(_product.Id, _from.Value);
 
+    private async Task Reverse(TransferRow t)
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync($"Reverse {t.Number}?", $"Moves {t.Quantity} x {t.Product} back from {t.To} to {t.From} with compensating ledger movements. The original movements stay in the history.", yesText: "Reverse transfer", cancelText: "Keep");
+        if (ok != true) return;
+        var r = await TransferSvc.ReverseAsync(t.Id, Me);
+        Snack.Add(r.Ok ? $"{t.Number} reversed ({r.Value})" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
+        await LoadAsync();
+    }
+
     private async Task Submit()
     {
         _error = null;
@@ -92,7 +112,7 @@
         _busy = true;
         try
         {
-            var r = await TransferSvc.TransferAsync(_product.Id, _lotId ?? 0, _from ?? 0, _to ?? 0, _qty, Actor);
+            var r = await TransferSvc.TransferAsync(_product.Id, _lotId ?? 0, _from ?? 0, _to ?? 0, _qty, Me);
             if (r.Ok) { Snack.Add($"{r.Value} completed", Severity.Success); _lotId = null; _qty = 1; await RefreshLots(); await _form.ResetValidationAsync(); }
             else _error = r.Error;
         }

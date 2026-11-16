@@ -20,7 +20,7 @@ public static class DemoUsers
 }
 
 /// <summary>Creates the SQLite schema and fills it with deterministic synthetic data (no real products, companies or people).</summary>
-public sealed class DemoSeeder(IDbContextFactory<MedStockDb> factory, IServiceProvider sp, WriteGate gate, InventoryEventHub hub, SimulationControl sim, TimeProvider clock)
+public sealed class DemoSeeder(IDbContextFactory<MedStockDb> factory, IServiceProvider sp, WriteGate gate, InventoryEventHub hub, SimulationControl sim, TimeProvider clock, ILogger<DemoSeeder> log)
 {
     private sealed record Base(string Name, string Category, bool Cold, double CostLo, double CostHi, string[] Strengths, string[] Forms, string Unit, int Pack, int Shelf);
 
@@ -97,12 +97,56 @@ public sealed class DemoSeeder(IDbContextFactory<MedStockDb> factory, IServicePr
     ];
     private static readonly string[] Cities = ["Springfield", "Riverton", "Fairview", "Lakeside", "Oakdale", "Brookfield", "Maple Heights", "Clearwater", "Ashford", "Westbrook", "Kingsport", "Millbrook"];
 
+    /// <summary>Bump when entities change. 1 = original release; 2 = IsActive flags and transfer reversal columns (v1.2.0).</summary>
+    public const int SchemaVersion = 2;
+
+    private static async Task<bool> TableExistsAsync(MedStockDb db, string table)
+    {
+        var conn = db.Database.GetDbConnection();
+        var wasOpen = conn.State == System.Data.ConnectionState.Open;
+        if (!wasOpen) await conn.OpenAsync();
+        try
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=$n";
+            var prm = cmd.CreateParameter(); prm.ParameterName = "$n"; prm.Value = table; cmd.Parameters.Add(prm);
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync()) > 0;
+        }
+        finally { if (!wasOpen) await conn.CloseAsync(); }
+    }
+
+    private static async Task<int> ReadSchemaVersionAsync(MedStockDb db)
+    {
+        var conn = db.Database.GetDbConnection();
+        var wasOpen = conn.State == System.Data.ConnectionState.Open;
+        if (!wasOpen) await conn.OpenAsync();
+        try
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA user_version";
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        }
+        finally { if (!wasOpen) await conn.CloseAsync(); }
+    }
+
     public async Task InitializeAsync()
     {
         await using (var db = await factory.CreateDbContextAsync())
         {
+            // The schema is created with EnsureCreated (no migrations). The version lives in SQLite's user_version pragma; when the
+            // code expects a newer schema than the file on disk, the demo database is dropped, recreated and reseeded.
+            var existed = await db.Database.CanConnectAsync() && await TableExistsAsync(db, "Products");
+            var found = existed ? await ReadSchemaVersionAsync(db) : 0;
+            if (existed && found != SchemaVersion)
+            {
+                log.LogWarning("Database schema version {Found} does not match the expected {Expected}: recreating and reseeding the demo database (demo data only; demo users are recreated).", found, SchemaVersion);
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                await db.Database.EnsureDeletedAsync();
+            }
             await db.Database.EnsureCreatedAsync();
             await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
+            await db.Database.ExecuteSqlRawAsync($"PRAGMA user_version = {SchemaVersion};");
+            if (!existed || found != SchemaVersion) log.LogInformation("Database ready at schema version {Version}.", SchemaVersion);
         }
         await EnsureUsersAsync();
         await using (var db = await factory.CreateDbContextAsync())
@@ -321,7 +365,7 @@ public sealed class DemoSeeder(IDbContextFactory<MedStockDb> factory, IServicePr
                     qty = await db.StockLevels.Where(s => s.WarehouseId == wh.Id && s.ProductId == p.ProductId).SumAsync(s => s.Quantity - s.Allocated) + rng.Next(3, 30);
                 lines.Add(new NewOrderLine(p.ProductId, qty));
             }
-            var res = await orders.CreateAsync(new NewOrderRequest(customers[rng.Next(customers.Count)], wh.Id, lines), "Seed");
+            var res = await orders.CreateAsync(new NewOrderRequest(customers[rng.Next(customers.Count)], wh.Id, lines), Caller.System("Seed"));
             if (res.Ok) created.Add((res.Value!.Id, res.Value.Number));
         }
 
@@ -331,10 +375,10 @@ public sealed class DemoSeeder(IDbContextFactory<MedStockDb> factory, IServicePr
             var (id, number) = created[i];
             if (i < 24)
             {
-                await orders.AdvanceAsync(id, "Seed"); await orders.AdvanceAsync(id, "Seed");
+                await orders.AdvanceAsync(id, Caller.System("Seed")); await orders.AdvanceAsync(id, Caller.System("Seed"));
                 shippedAges[number] = rng.Next(1, 28);
             }
-            else if (i < 30) await orders.AdvanceAsync(id, "Seed");
+            else if (i < 30) await orders.AdvanceAsync(id, Caller.System("Seed"));
         }
         foreach (var (id, number) in created)
         {
@@ -354,15 +398,15 @@ public sealed class DemoSeeder(IDbContextFactory<MedStockDb> factory, IServicePr
         {
             var lines = g.Take(4).Select(s => new NewOrderLine(s.ProductId, s.SuggestedQty)).ToList();
             var dest = g.Any(s => s.ColdChain) ? coldWh : warm;
-            var r = await purchasing.CreatePurchaseOrdersAsync(lines, dest, "Seed");
+            var r = await purchasing.CreatePurchaseOrdersAsync(lines, dest, Caller.System("Seed"));
             if (r.Ok) poNumbers.AddRange(r.Value!);
         }
         var pos = await purchasing.ListAsync();
-        if (pos.Count > 0) await purchasing.ReceiveAsync(pos[^1].Id, "Seed");
+        if (pos.Count > 0) await purchasing.ReceiveAsync(pos[^1].Id, Caller.System("Seed"));
         if (pos.Count > 1)
         {
             var po = pos[^2];
-            await purchasing.ReceiveAsync(po.Id, "Seed", [new ReceiptLine(po.Lines[0].LineId, Math.Max(1, po.Lines[0].Ordered / 2))]);
+            await purchasing.ReceiveAsync(po.Id, Caller.System("Seed"), [new ReceiptLine(po.Lines[0].LineId, Math.Max(1, po.Lines[0].Ordered / 2))]);
         }
         var i2 = 0;
         foreach (var po in await purchasing.ListAsync())

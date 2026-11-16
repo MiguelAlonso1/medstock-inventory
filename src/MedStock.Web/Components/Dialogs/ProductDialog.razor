@@ -1,0 +1,112 @@
+@inject MasterDataService Svc
+
+<MudDialog>
+    <TitleContent><MudText Typo="Typo.h6">@(Model.Id == 0 ? "New product" : $"Edit {Model.Sku}")</MudText></TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_valid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="5">
+                    <MudTextField T="string" @bind-Value="_m.Sku" Label="SKU" Variant="Variant.Outlined" Required="true" RequiredError="SKU is required" MaxLength="40" />
+                </MudItem>
+                <MudItem xs="12" sm="7">
+                    <MudTextField T="string" @bind-Value="_m.Name" Label="Name" Variant="Variant.Outlined" Required="true" RequiredError="Name is required" MaxLength="120" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudAutocomplete T="string" @bind-Value="_m.Category" SearchFunc="SearchCategories" Label="Category" Variant="Variant.Outlined" Required="true"
+                                     RequiredError="Category is required" CoerceText="true" CoerceValue="true" MaxLength="60" Clearable="true" />
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudTextField T="string" @bind-Value="_m.Unit" Label="Unit" Variant="Variant.Outlined" Required="true" RequiredError="Unit is required" MaxLength="30" />
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudNumericField T="double" @bind-Value="_m.UnitCost" Label="Unit cost" Variant="Variant.Outlined" Min="0" Format="0.00" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField T="string" @bind-Value="_m.NdcCode" Label="NDC code (optional)" Variant="Variant.Outlined" MaxLength="30" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int" @bind-Value="_m.SupplierId" Label="Supplier" Variant="Variant.Outlined" Required="true"
+                               Validation="@((Func<int, string?>)(v => v == 0 ? "Choose a supplier" : null))">
+                        @foreach (var s in Suppliers) { <MudSelectItem T="int" Value="@s.Id">@s.Name</MudSelectItem> }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudNumericField T="int" @bind-Value="_m.MinLevel" Label="Reorder point" Variant="Variant.Outlined" Min="0"
+                                     Validation="@((Func<int, string?>)(v => v < 0 ? "Cannot be negative" : null))" />
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <MudNumericField T="int" @bind-Value="_m.MaxLevel" Label="Reorder qty (max)" Variant="Variant.Outlined" Min="0"
+                                     Validation="@((Func<int, string?>)(v => v < _m.MinLevel ? "Must be at least the reorder point" : null))" />
+                </MudItem>
+                <MudItem xs="4" sm="2">
+                    <MudNumericField T="int" @bind-Value="_m.PackSize" Label="Pack" Variant="Variant.Outlined" Min="1"
+                                     Validation="@((Func<int, string?>)(v => v < 1 ? "At least 1" : null))" />
+                </MudItem>
+                <MudItem xs="4" sm="2">
+                    <MudNumericField T="int" @bind-Value="_m.ShelfLifeMonths" Label="Shelf (mo)" Variant="Variant.Outlined" Min="1"
+                                     Validation="@((Func<int, string?>)(v => v < 1 ? "At least 1" : null))" />
+                </MudItem>
+                <MudItem xs="4" sm="2">
+                    <MudNumericField T="double" @bind-Value="_m.AvgDailyDemand" Label="Demand/day" Variant="Variant.Outlined" Min="0" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudSwitch T="bool" @bind-Value="_m.ColdChain" Color="Color.Info" Label="Cold-chain product" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@_error</MudAlert> }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save" Disabled="_busy" StartIcon="@Icons.Material.Rounded.Check">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public ProductInput Model { get; set; } = default!;
+    [Parameter] public IReadOnlyList<Supplier> Suppliers { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> Categories { get; set; } = [];
+    [Parameter] public Caller Me { get; set; } = default!;
+
+    private sealed class Edit
+    {
+        public string Sku = "", Name = "", NdcCode = "", Category = "", Unit = "each";
+        public bool ColdChain;
+        public double UnitCost, AvgDailyDemand;
+        public int MinLevel, MaxLevel, PackSize = 1, ShelfLifeMonths = 24, SupplierId;
+    }
+
+    private MudForm _form = default!;
+    private bool _valid, _busy;
+    private string? _error;
+    private Edit _m = new();
+
+    protected override void OnInitialized() => _m = new Edit
+    {
+        Sku = Model.Sku, Name = Model.Name, NdcCode = Model.NdcCode, Category = Model.Category, Unit = Model.Unit, ColdChain = Model.ColdChain,
+        UnitCost = Model.UnitCost, AvgDailyDemand = Model.AvgDailyDemand, MinLevel = Model.MinLevel, MaxLevel = Model.MaxLevel,
+        PackSize = Model.PackSize, ShelfLifeMonths = Model.ShelfLifeMonths, SupplierId = Model.SupplierId
+    };
+
+    private Task<IEnumerable<string>> SearchCategories(string? term, CancellationToken ct) =>
+        Task.FromResult(Categories.Where(c => string.IsNullOrWhiteSpace(term) || c.Contains(term, StringComparison.OrdinalIgnoreCase)));
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Save()
+    {
+        _error = null;
+        await _form.ValidateAsync();
+        if (!_valid) return;
+        _busy = true;
+        try
+        {
+            var r = await Svc.SaveProductAsync(new ProductInput(Model.Id, _m.Sku, _m.Name, _m.NdcCode, _m.Category, _m.Unit, _m.ColdChain, _m.UnitCost,
+                _m.MinLevel, _m.MaxLevel, _m.PackSize, _m.ShelfLifeMonths, _m.AvgDailyDemand, _m.SupplierId), Me);
+            if (r.Ok) MudDialog.Close(DialogResult.Ok(r.Value));
+            else _error = r.Error;
+        }
+        finally { _busy = false; }
+    }
+}

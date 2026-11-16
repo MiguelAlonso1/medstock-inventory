@@ -24,14 +24,16 @@ MedStock: fictional healthcare inventory and order management demo (synthetic da
 - Stop the running app before building/testing (the exe is locked on Windows).
 
 ## Structure
-- `src/MedStock.Domain` - pure rules, no EF/ASP.NET: `FefoAllocator`, `ReorderCalculator`, `ExpiryClassifier`, `StockLedger` (never negative), `PurchaseOrderReceiving`, `OrderWorkflow`
+- `src/MedStock.Domain` - pure rules, no EF/ASP.NET: `FefoAllocator`, `ReorderCalculator`, `ExpiryClassifier`, `StockLedger` (never negative), `PurchaseOrderReceiving`, `OrderWorkflow`, `MasterData.cs` (delete/deactivate policy, validation, order-edit, PO and transfer-reversal rules)
 - `src/MedStock.Web/Data` - entities, `MedStockDb` (Identity + business tables), `DemoSeeder` (deterministic synthetic data, demo users, admin reset)
-- `src/MedStock.Web/Services` - `OrderService`, `PurchasingService`, `TransferService`, `InventoryQueries` (all singletons over `IDbContextFactory`), `WriteGate` (serializes writes), `InventoryEventHub` (publish/subscribe), `SimulationWorker` + `SimulationControl`
+- `src/MedStock.Web/Services` - `OrderService`, `PurchasingService`, `TransferService`, `MasterDataService`, `InventoryQueries` (all singletons over `IDbContextFactory`), `WriteGate` (serializes writes), `InventoryEventHub` (publish/subscribe), `SimulationWorker` + `SimulationControl`
 - `src/MedStock.Web/Endpoints` - theme, account (form posts), JSON API (`/api/orders`, `/api/purchase-orders/{id}/receive`, `/api/ledger/verify`, `/api/admin/reset-demo`)
 - `src/MedStock.Web/Components` - `Pages`, `Layout` (MainLayout, AuthLayout for the static login page), `Shared` (`LiveComponentBase`, `KpiTile`, `Chips`, `ActivityFeed`)
 - `src/MedStock.Web/Theme/AppTheme.cs` - MudTheme
 
 ## Conventions
+- Every mutating service method takes a `Caller` (name + Admin/CanManage/CanFulfill flags; pages use `Me`, endpoints `Caller.From(user)`, seeder/simulator `Caller.System(...)`) and checks it itself. Hard delete is only for unreferenced records, otherwise `IsActive=false`. The ledger is append-only: undo = compensating movements.
+- Schema: `EnsureCreated` + `DemoSeeder.SchemaVersion` (SQLite `user_version`). Bump it when entities change; an older DB is recreated and reseeded on startup.
 - Every state change goes through a service that takes the `WriteGate`, saves, then publishes an event on `InventoryEventHub` with `Topic` flags. Pages inherit `LiveComponentBase`, override `Topics` and `LoadAsync`; the base class reloads (coalesced) on matching events and exposes `Actor`, `CanManage`, `CanFulfill`, `IsAdmin`.
 - Stock may never go negative: use `StockLedger.ApplyDelta` for level changes and write a `StockMovement` for every quantity change. `/api/ledger/verify` replays history against current stock.
 - Cold-chain products can only be stored/ordered/transferred at cold-chain capable warehouses.

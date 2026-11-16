@@ -1,0 +1,70 @@
+@inject OrderService OrderSvc
+@inject InventoryQueries Queries
+
+<MudDialog>
+    <TitleContent><MudText Typo="Typo.h6">Edit lines of @Order.Number</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">Saving releases all reservations of this order and re-allocates every line first-expiry-first-out from @Order.Warehouse.</MudText>
+        <MudForm @ref="_form" @bind-IsValid="_valid">
+            @for (var i = 0; i < _lines.Count; i++)
+            {
+                var line = _lines[i];
+                <MudGrid Spacing="2" Class="align-start">
+                    <MudItem xs="12" sm="7">
+                        <MudAutocomplete T="ProductOption" @bind-Value="line.Product" SearchFunc="SearchProducts" ToStringFunc="@(p => p?.ToString())"
+                                         Label="Product" Variant="Variant.Outlined" Required="true" RequiredError="Choose a product" CoerceText="false" ResetValueOnEmptyText="true"
+                                         MaxItems="25" DebounceInterval="200" />
+                    </MudItem>
+                    <MudItem xs="8" sm="3">
+                        <MudNumericField T="int" @bind-Value="line.Quantity" Label="Quantity" Variant="Variant.Outlined" Min="1" Max="100000"
+                                         Validation="@((Func<int, string?>)(v => v < 1 ? "At least 1" : null))" />
+                    </MudItem>
+                    <MudItem xs="4" sm="2" Class="d-flex align-center" Style="min-height:56px">
+                        <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Disabled="@(_lines.Count == 1)" OnClick="() => _lines.Remove(line)" aria-label="Remove line" />
+                    </MudItem>
+                </MudGrid>
+            }
+            <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => _lines.Add(new())">Add line</MudButton>
+        </MudForm>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@_error</MudAlert> }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save" Disabled="_busy" StartIcon="@Icons.Material.Rounded.Check">Save and re-allocate</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public OrderResult Order { get; set; } = default!;
+    [Parameter] public Caller Me { get; set; } = default!;
+
+    private sealed class LineModel { public ProductOption? Product { get; set; } public int Quantity { get; set; } = 1; }
+
+    private MudForm _form = default!;
+    private bool _valid, _busy;
+    private string? _error;
+    private readonly List<LineModel> _lines = [];
+
+    protected override void OnInitialized() =>
+        _lines.AddRange(Order.Lines.Select(l => new LineModel { Product = new ProductOption(l.ProductId, l.Sku, l.Name, false), Quantity = l.Ordered }));
+
+    private async Task<IEnumerable<ProductOption>> SearchProducts(string? term, CancellationToken ct) => await Queries.SearchProductsAsync(term);
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Save()
+    {
+        _error = null;
+        await _form.ValidateAsync();
+        if (!_valid || _lines.Any(l => l.Product is null)) { _error ??= "Complete the highlighted fields."; return; }
+        _busy = true;
+        try
+        {
+            var r = await OrderSvc.UpdateLinesAsync(Order.Id, _lines.Select(l => new NewOrderLine(l.Product!.Id, l.Quantity)).ToList(), Me);
+            if (r.Ok) MudDialog.Close(DialogResult.Ok(r.Value));
+            else _error = r.Error;
+        }
+        finally { _busy = false; }
+    }
+}

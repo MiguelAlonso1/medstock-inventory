@@ -66,34 +66,34 @@ public sealed class SimulationWorker(IDbContextFactory<MedStockDb> factory, Orde
     private async Task NewOrderAsync()
     {
         await using var db = await factory.CreateDbContextAsync();
-        var customers = await db.Customers.Select(c => c.Id).ToListAsync();
-        var whs = await db.Warehouses.AsNoTracking().ToListAsync();
+        var customers = await db.Customers.Where(c => c.IsActive).Select(c => c.Id).ToListAsync();
+        var whs = await db.Warehouses.AsNoTracking().Where(w => w.IsActive).ToListAsync();
         if (customers.Count == 0 || whs.Count == 0) return;
         var wh = whs[_rng.Next(whs.Count)];
-        var pool = await db.StockLevels.AsNoTracking().Where(s => s.WarehouseId == wh.Id && s.Quantity - s.Allocated > 8)
+        var pool = await db.StockLevels.AsNoTracking().Where(s => s.WarehouseId == wh.Id && s.Product!.IsActive && s.Quantity - s.Allocated > 8)
             .OrderBy(s => s.Id).Select(s => new { s.ProductId, A = s.Quantity - s.Allocated }).Take(150).ToListAsync();
         if (pool.Count == 0) return;
         var lines = pool.OrderBy(_ => _rng.Next()).Take(_rng.Next(1, 4))
             .Select(p => new NewOrderLine(p.ProductId, _rng.Next(1, Math.Max(2, Math.Min(30, p.A / 3))))).ToList();
-        await orders.CreateAsync(new NewOrderRequest(customers[_rng.Next(customers.Count)], wh.Id, lines), "Simulator");
+        await orders.CreateAsync(new NewOrderRequest(customers[_rng.Next(customers.Count)], wh.Id, lines), Caller.System("Simulator"));
     }
 
     private async Task AdvanceOrderAsync()
     {
         await using var db = await factory.CreateDbContextAsync();
-        var ids = await db.Orders.Where(o => o.Status == OrderStatus.Allocated || o.Status == OrderStatus.Picking)
+        var ids = await db.Orders.Where(o => (o.Status == OrderStatus.Allocated || o.Status == OrderStatus.Picking) && (o.CreatedBy == "Simulator" || o.CreatedBy == "Seed"))
             .OrderBy(o => o.CreatedUtc).Take(12).Select(o => o.Id).ToListAsync();
         if (ids.Count == 0) { await NewOrderAsync(); return; }
-        await orders.AdvanceAsync(ids[_rng.Next(Math.Min(ids.Count, 6))], "Simulator");
+        await orders.AdvanceAsync(ids[_rng.Next(Math.Min(ids.Count, 6))], Caller.System("Simulator"));
     }
 
     private async Task ReceivePoAsync()
     {
         await using var db = await factory.CreateDbContextAsync();
-        var ids = await db.PurchaseOrders.Where(p => p.Status == PurchaseOrderStatus.Ordered || p.Status == PurchaseOrderStatus.PartiallyReceived)
+        var ids = await db.PurchaseOrders.Where(p => (p.Status == PurchaseOrderStatus.Ordered || p.Status == PurchaseOrderStatus.PartiallyReceived) && (p.CreatedBy == "Simulator" || p.CreatedBy == "Seed"))
             .OrderBy(p => p.CreatedUtc).Take(5).Select(p => p.Id).ToListAsync();
         if (ids.Count == 0) { await ReplenishAsync(); return; }
-        await purchasing.ReceiveAsync(ids[_rng.Next(ids.Count)], "Simulator");
+        await purchasing.ReceiveAsync(ids[_rng.Next(ids.Count)], Caller.System("Simulator"));
     }
 
     private async Task ReplenishAsync()
@@ -104,23 +104,25 @@ public sealed class SimulationWorker(IDbContextFactory<MedStockDb> factory, Orde
         if (s.Count == 0) return;
         var pick = s[_rng.Next(Math.Min(6, s.Count))];
         await using var db = await factory.CreateDbContextAsync();
-        var wh = await db.Warehouses.Where(w => !pick.ColdChain || w.ColdChainCapable).OrderBy(w => w.Id).ToListAsync();
-        await purchasing.CreatePurchaseOrdersAsync([new NewOrderLine(pick.ProductId, pick.SuggestedQty)], wh[_rng.Next(wh.Count)].Id, "Simulator");
+        var wh = await db.Warehouses.Where(w => w.IsActive && (!pick.ColdChain || w.ColdChainCapable)).OrderBy(w => w.Id).ToListAsync();
+        if (wh.Count == 0) return;
+        await purchasing.CreatePurchaseOrdersAsync([new NewOrderLine(pick.ProductId, pick.SuggestedQty)], wh[_rng.Next(wh.Count)].Id, Caller.System("Simulator"));
     }
 
     private async Task TransferAsync()
     {
         await using var db = await factory.CreateDbContextAsync();
-        var whs = await db.Warehouses.AsNoTracking().ToListAsync();
+        var whs = await db.Warehouses.AsNoTracking().Where(w => w.IsActive).ToListAsync();
+        if (whs.Count < 2) return;
         var from = whs[_rng.Next(whs.Count)];
-        var levels = await db.StockLevels.AsNoTracking().Where(s => s.WarehouseId == from.Id && s.Quantity - s.Allocated > 60)
+        var levels = await db.StockLevels.AsNoTracking().Where(s => s.WarehouseId == from.Id && s.Product!.IsActive && s.Quantity - s.Allocated > 60)
             .OrderBy(s => s.Id).Select(s => new { s.ProductId, s.LotId, A = s.Quantity - s.Allocated, s.Product!.ColdChain, s.Lot!.ExpirationDate }).Take(60).ToListAsync();
         var today = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
         var cand = levels.Where(l => l.ExpirationDate >= today).OrderBy(_ => _rng.Next()).FirstOrDefault();
         if (cand is null) return;
         var targets = whs.Where(w => w.Id != from.Id && (!cand.ColdChain || w.ColdChainCapable)).ToList();
         if (targets.Count == 0) return;
-        await transfers.TransferAsync(cand.ProductId, cand.LotId, from.Id, targets[_rng.Next(targets.Count)].Id, _rng.Next(10, Math.Min(60, cand.A / 2) + 1), "Simulator");
+        await transfers.TransferAsync(cand.ProductId, cand.LotId, from.Id, targets[_rng.Next(targets.Count)].Id, _rng.Next(10, Math.Min(60, cand.A / 2) + 1), Caller.System("Simulator"));
     }
 
     private async Task ExcursionAsync()
@@ -128,7 +130,7 @@ public sealed class SimulationWorker(IDbContextFactory<MedStockDb> factory, Orde
         await gate.RunAsync(async () =>
         {
             await using var db = await factory.CreateDbContextAsync();
-            var cold = await db.Warehouses.Where(w => w.ColdChainCapable).ToListAsync();
+            var cold = await db.Warehouses.Where(w => w.IsActive && w.ColdChainCapable).ToListAsync();
             if (cold.Count == 0) return 0;
             if (await db.Excursions.CountAsync(e => e.AcknowledgedUtc == null) >= 3) return 0;
             var wh = cold[_rng.Next(cold.Count)];

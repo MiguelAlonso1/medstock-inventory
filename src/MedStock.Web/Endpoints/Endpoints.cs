@@ -81,20 +81,20 @@ public static class AppEndpoints
         // Creates the order and FEFO-allocates stock at the chosen warehouse.
         api.MapPost("/orders", async (CreateOrderDto dto, OrderService svc, ClaimsPrincipal user) =>
         {
-            var res = await svc.CreateAsync(new NewOrderRequest(dto.CustomerId, dto.WarehouseId, dto.Lines.Select(l => new NewOrderLine(l.ProductId, l.Quantity)).ToList()), Actor(user));
+            var res = await svc.CreateAsync(new NewOrderRequest(dto.CustomerId, dto.WarehouseId, dto.Lines.Select(l => new NewOrderLine(l.ProductId, l.Quantity)).ToList()), Caller.From(user));
             return res.Ok ? Results.Created($"/api/orders/{res.Value!.Id}", res.Value) : Results.BadRequest(new { error = res.Error });
         }).RequireAuthorization(p => p.RequireRole(Roles.Admin, Roles.WarehouseManager)).DisableAntiforgery();
 
         api.MapPost("/orders/{id:int}/advance", async (int id, OrderService svc, ClaimsPrincipal user) =>
         {
-            var res = await svc.AdvanceAsync(id, Actor(user));
+            var res = await svc.AdvanceAsync(id, Caller.From(user));
             return res.Ok ? Results.Ok(res.Value) : Results.BadRequest(new { error = res.Error });
         }).RequireAuthorization(p => p.RequireRole(Roles.Admin, Roles.WarehouseManager, Roles.Picker)).DisableAntiforgery();
 
         api.MapPost("/purchase-orders/{id:int}/receive", async (int id, ReceiveDto? dto, PurchasingService svc, ClaimsPrincipal user) =>
         {
             var lines = dto?.Lines is { Count: > 0 } l ? l.Select(x => new ReceiptLine(x.LineId, x.Quantity)).ToList() : null;
-            var res = await svc.ReceiveAsync(id, Actor(user), lines);
+            var res = await svc.ReceiveAsync(id, Caller.From(user), lines);
             return res.Ok ? Results.Ok(res.Value) : Results.BadRequest(new { error = res.Error });
         }).RequireAuthorization(p => p.RequireRole(Roles.Admin, Roles.WarehouseManager)).DisableAntiforgery();
 

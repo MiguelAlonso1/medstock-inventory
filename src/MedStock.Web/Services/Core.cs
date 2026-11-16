@@ -1,7 +1,31 @@
+using System.Security.Claims;
+using MedStock.Web.Data;
+
 namespace MedStock.Web.Services;
 
+/// <summary>Who is performing an operation. Services check these flags themselves, so permissions hold even without page attributes.</summary>
+public sealed record Caller(string Name, bool IsAdmin, bool CanManage, bool CanFulfill)
+{
+    public static Caller From(ClaimsPrincipal u)
+    {
+        var admin = u.IsInRole(Roles.Admin);
+        var manage = admin || u.IsInRole(Roles.WarehouseManager);
+        return new Caller(u.FindFirstValue("display_name") ?? u.Identity?.Name ?? "unknown", admin, manage, manage || u.IsInRole(Roles.Picker));
+    }
+
+    /// <summary>Trusted internal actor (seeder, simulator).</summary>
+    public static Caller System(string name) => new(name, true, true, true);
+
+    public static Caller ForRole(string role, string name = "tester") => new(name, role == Roles.Admin,
+        role is Roles.Admin or Roles.WarehouseManager, role is Roles.Admin or Roles.WarehouseManager or Roles.Picker);
+
+    public const string DeniedManage = "Your role does not allow this action (Admin or Warehouse Manager required).";
+    public const string DeniedAdmin = "Your role does not allow this action (Admin required).";
+    public const string DeniedFulfill = "Your role does not allow this action (Picker, Warehouse Manager or Admin required).";
+}
+
 [Flags]
-public enum Topic { None = 0, Stock = 1, Orders = 2, Purchasing = 4, Alerts = 8, Activity = 16, All = 31 }
+public enum Topic { None = 0, Stock = 1, Orders = 2, Purchasing = 4, Alerts = 8, Activity = 16, Master = 32, All = 63 }
 
 public enum ActivityKind { Order, Shipment, Receipt, Transfer, Alert, System }
 
@@ -102,6 +126,14 @@ public sealed record OpResult(bool Ok, string? Error = null)
 {
     public static OpResult Success() => new(true);
     public static OpResult Fail(string error) => new(false, error);
+}
+
+/// <summary>Result of a delete request: deleted, blocked because the record is referenced (offer Deactivate), or failed.</summary>
+public sealed record DeleteResult(bool Deleted, bool Blocked, string? Message)
+{
+    public static DeleteResult Done() => new(true, false, null);
+    public static DeleteResult Block(string message) => new(false, true, message);
+    public static DeleteResult Fail(string message) => new(false, false, message);
 }
 
 public sealed record OpResult<T>(bool Ok, T? Value, string? Error = null)

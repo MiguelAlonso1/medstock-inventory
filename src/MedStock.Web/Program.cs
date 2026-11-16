@@ -71,6 +71,7 @@ builder.Services.AddSingleton<SimulationControl>();
 builder.Services.AddSingleton<OrderService>();
 builder.Services.AddSingleton<PurchasingService>();
 builder.Services.AddSingleton<TransferService>();
+builder.Services.AddSingleton<MasterDataService>();
 builder.Services.AddSingleton<InventoryQueries>();
 builder.Services.AddSingleton<DemoSeeder>();
 builder.Services.AddHostedService<SimulationWorker>();

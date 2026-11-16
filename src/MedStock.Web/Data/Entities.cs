@@ -23,6 +23,7 @@ public static class Roles
 public class Warehouse
 {
     public int Id { get; set; }
+    public bool IsActive { get; set; } = true;
     public string Code { get; set; } = "";
     public string Name { get; set; } = "";
     public string City { get; set; } = "";
@@ -32,6 +33,7 @@ public class Warehouse
 public class Supplier
 {
     public int Id { get; set; }
+    public bool IsActive { get; set; } = true;
     public string Name { get; set; } = "";
     public string Country { get; set; } = "";
     public int LeadTimeDays { get; set; }
@@ -40,6 +42,7 @@ public class Supplier
 public class Customer
 {
     public int Id { get; set; }
+    public bool IsActive { get; set; } = true;
     public string Name { get; set; } = "";
     public string City { get; set; } = "";
 }
@@ -47,6 +50,7 @@ public class Customer
 public class Product
 {
     public int Id { get; set; }
+    public bool IsActive { get; set; } = true;
     public string Sku { get; set; } = "";
     public string Name { get; set; } = "";
     public string NdcCode { get; set; } = "";
@@ -180,6 +184,8 @@ public class Transfer
     public int Quantity { get; set; }
     public DateTime CreatedUtc { get; set; }
     public string CreatedBy { get; set; } = "";
+    public DateTime? ReversedUtc { get; set; }
+    public string? ReversedBy { get; set; }
     public Product? Product { get; set; }
     public Lot? Lot { get; set; }
     public Warehouse? FromWarehouse { get; set; }

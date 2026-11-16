@@ -1,0 +1,50 @@
+@inject MasterDataService Svc
+
+<MudDialog>
+    <TitleContent><MudText Typo="Typo.h6">@(Model.Id == 0 ? "New warehouse" : "Edit warehouse")</MudText></TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" @bind-IsValid="_valid">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="4"><MudTextField T="string" Value="_m.Code" ValueChanged="@(v => _m = _m with { Code = v ?? "" })" Label="Code" Variant="Variant.Outlined" Required="true" RequiredError="Code is required" MaxLength="10" /></MudItem>
+                <MudItem xs="12" sm="8"><MudTextField T="string" Value="_m.Name" ValueChanged="@(v => _m = _m with { Name = v ?? "" })" Label="Name" Variant="Variant.Outlined" Required="true" RequiredError="Name is required" MaxLength="120" /></MudItem>
+                <MudItem xs="12"><MudTextField T="string" Value="_m.City" ValueChanged="@(v => _m = _m with { City = v ?? "" })" Label="City" Variant="Variant.Outlined" Required="true" RequiredError="City is required" MaxLength="80" /></MudItem>
+                <MudItem xs="12"><MudSwitch T="bool" Value="_m.ColdChainCapable" ValueChanged="@(v => _m = _m with { ColdChainCapable = v })" Color="Color.Info" Label="Cold-chain capable (can store cold-chain products)" /></MudItem>
+            </MudGrid>
+        </MudForm>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@_error</MudAlert> }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save" Disabled="_busy" StartIcon="@Icons.Material.Rounded.Check">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public WarehouseInput Model { get; set; } = default!;
+    [Parameter] public Caller Me { get; set; } = default!;
+
+    private MudForm _form = default!;
+    private bool _valid, _busy;
+    private string? _error;
+    private WarehouseInput _m = default!;
+
+    protected override void OnInitialized() => _m = Model;
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Save()
+    {
+        _error = null;
+        await _form.ValidateAsync();
+        if (!_valid) return;
+        _busy = true;
+        try
+        {
+            var r = await Svc.SaveWarehouseAsync(_m, Me);
+            if (r.Ok) MudDialog.Close(DialogResult.Ok(r.Value));
+            else _error = r.Error;
+        }
+        finally { _busy = false; }
+    }
+}

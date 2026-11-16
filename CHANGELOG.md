@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0 - 2026-11-16
+
+Full CRUD with role-based permissions and an append-only ledger.
+
+- Master data pages (`/manage/products|warehouses|suppliers|customers`, Admin and Warehouse Manager): MudDataGrid with search, create/edit MudDialog forms with validation, delete with confirmation. Records referenced by stock, lots, orders, POs or movements cannot be deleted; the dialog offers Deactivate instead.
+- New `IsActive` flag on products, warehouses, suppliers and customers. Inactive records are hidden from pickers, autocompletes, reorder suggestions, low-stock alerts and the simulator; history stays readable.
+- Customer orders: edit lines (add, remove, quantity) while Pending or Allocated, with full release and FEFO re-allocation inside one transaction. Admin-only delete of cancelled orders without stock movements. Cancel now asks for confirmation.
+- Purchase orders: manual PO creation (supplier, warehouse, lines), edit quantities (not below received), cancel before any receipt.
+- Transfers: reverse with compensating TransferOut/TransferIn movements (`TRF-xxxxx-REV`); original ledger rows are untouched and `/api/ledger/verify` still passes.
+- Services now take a `Caller` (name and role flags) and enforce permissions themselves; denied calls return an error and change nothing.
+- Simulator ignores inactive products, warehouses and customers, no longer advances or receives user-created orders and POs, and tolerates empty user-created warehouses and products.
+- Schema version check (`PRAGMA user_version` = 2): an older database is dropped, recreated and reseeded on startup with a clear log message, so the host's existing `App_Data` upgrades.
+- Tests: domain rules, service tests for every create/edit/delete/deactivate path, order reallocation, PO cancel/edit/manual, transfer reversal ledger integrity, role denials and the new pages' access rules.
+
 ## 1.1.0 - 2026-11-16
 
 Deployment to production slot.

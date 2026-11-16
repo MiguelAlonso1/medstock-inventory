@@ -1,0 +1,57 @@
+@inject PurchasingService Svc
+
+<MudDialog>
+    <TitleContent><MudText Typo="Typo.h6">Edit quantities of @Po.Number</MudText></TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">Quantities cannot go below what was already received.</MudText>
+        <MudForm @ref="_form" @bind-IsValid="_valid">
+            @foreach (var l in Po.Lines)
+            {
+                var line = l;
+                <MudNumericField T="int" Value="_qty[line.LineId]" ValueChanged="@(v => _qty[line.LineId] = v)" Label="@($"{line.Name} (received {line.Received})")" Variant="Variant.Outlined" Class="mb-2"
+                                 Min="@Math.Max(1, line.Received)" Validation="@((Func<int, string?>)(v => v < Math.Max(1, line.Received) ? $"At least {Math.Max(1, line.Received)}" : null))" />
+            }
+            <MudDatePicker Date="_expected" DateChanged="@(d => _expected = d)" Label="Expected date" Variant="Variant.Outlined" Editable="true" />
+        </MudForm>
+        @if (_error is not null) { <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@_error</MudAlert> }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save" Disabled="_busy" StartIcon="@Icons.Material.Rounded.Check">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public PurchaseOrderView Po { get; set; } = default!;
+    [Parameter] public Caller Me { get; set; } = default!;
+
+    private MudForm _form = default!;
+    private bool _valid, _busy;
+    private string? _error;
+    private Dictionary<int, int> _qty = [];
+    private DateTime? _expected;
+
+    protected override void OnInitialized()
+    {
+        _qty = Po.Lines.ToDictionary(l => l.LineId, l => l.Ordered);
+        _expected = Po.Expected.ToDateTime(TimeOnly.MinValue);
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Save()
+    {
+        _error = null;
+        await _form.ValidateAsync();
+        if (!_valid) return;
+        _busy = true;
+        try
+        {
+            var r = await Svc.UpdateQuantitiesAsync(Po.Id, _qty, _expected is { } d ? DateOnly.FromDateTime(d) : null, Me);
+            if (r.Ok) MudDialog.Close(DialogResult.Ok(r.Value));
+            else _error = r.Error;
+        }
+        finally { _busy = false; }
+    }
+}

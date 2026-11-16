@@ -1,0 +1,83 @@
+@page "/manage/suppliers"
+@attribute [Authorize(Roles = Roles.ManageRoles)]
+@inherits LiveComponentBase
+@inject MasterDataService Svc
+@inject IDialogService Dialogs
+@inject ISnackbar Snack
+
+<PageTitle>Suppliers - MedStock</PageTitle>
+
+<div class="page-head manage-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Suppliers</MudText>
+        <MudText Color="Color.Secondary">Who the stock is bought from. A supplier with products or purchase orders cannot be deleted; deactivate it instead.</MudText>
+    </div>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="() => OpenAsync(null)">New supplier</MudButton>
+</div>
+
+<MudPaper Elevation="0" Class="panel">
+    <div class="d-flex flex-wrap align-center gap-3 pa-3 manage-toolbar">
+        <MudTextField T="string" @bind-Value="_search" Placeholder="Search suppliers" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search" Class="flex-grow-1" aria-label="Search suppliers" />
+        <MudSwitch T="bool" @bind-Value="_showInactive" Color="Color.Primary" Label="Show inactive" />
+    </div>
+    <MudDataGrid T="Supplier" Items="Visible" QuickFilter="Match" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm" SortMode="SortMode.Multiple" Filterable="false" ReadOnly="true" Class="manage-grid">
+        <Columns>
+            <PropertyColumn Property="x => x.Name" Title="Name" CellStyle="min-width:220px" />
+            <PropertyColumn Property="x => x.Country" Title="Country" />
+            <PropertyColumn Property="x => x.LeadTimeDays" Title="Lead time (days)" />
+            <TemplateColumn Title="Status" SortBy="@(x => x.IsActive)">
+                <CellTemplate><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@(context.Item.IsActive ? Color.Success : Color.Default)" Class="my-0">@(context.Item.IsActive ? "Active" : "Inactive")</MudChip></CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="" Sortable="false" CellClass="text-right">
+                <CellTemplate>
+                    <div class="d-flex justify-end">
+                        <MudIconButton Icon="@Icons.Material.Rounded.Edit" OnClick="() => OpenAsync(context.Item)" aria-label="@($"Edit {Label(context.Item)}")" />
+                        <MudIconButton Icon="@(context.Item.IsActive ? Icons.Material.Rounded.VisibilityOff : Icons.Material.Rounded.Visibility)" OnClick="() => ToggleAsync(context.Item)"
+                                       aria-label="@($"{(context.Item.IsActive ? "Deactivate" : "Reactivate")} {Label(context.Item)}")" />
+                        <MudIconButton Icon="@Icons.Material.Rounded.DeleteOutline" Color="Color.Error" OnClick="() => DeleteAsync(context.Item)" aria-label="@($"Delete {Label(context.Item)}")" />
+                    </div>
+                </CellTemplate>
+            </TemplateColumn>
+        </Columns>
+        <NoRecordsContent><MudText Class="pa-6" Color="Color.Secondary">No suppliers match.</MudText></NoRecordsContent>
+        <PagerContent><MudDataGridPager T="Supplier" PageSizeOptions="@(new[] { 10, 25, 50 })" /></PagerContent>
+    </MudDataGrid>
+</MudPaper>
+
+@code {
+    private IReadOnlyList<Supplier> _all = [];
+    private string? _search;
+    private bool _showInactive = true;
+
+    protected override Topic Topics => Topic.Master;
+
+    private IEnumerable<Supplier> Visible => _showInactive ? _all : _all.Where(x => x.IsActive);
+
+    protected override async Task LoadAsync() => _all = await Svc.ListSuppliersAsync();
+
+    private static string Label(Supplier x) => x.Name;
+
+    private bool Match(Supplier x) => string.IsNullOrWhiteSpace(_search) || x.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) || x.Country.Contains(_search, StringComparison.OrdinalIgnoreCase);
+
+    private async Task OpenAsync(Supplier? x)
+    {
+        var model = x is null ? new SupplierInput(0, "", "", 7) : new SupplierInput(x.Id, x.Name, x.Country, x.LeadTimeDays);
+        var parameters = new DialogParameters<SupplierDialog> { { d => d.Model, model }, { d => d.Me, Me } };
+        var dlg = await Dialogs.ShowAsync<SupplierDialog>(null, parameters, MasterFlows.Options);
+        var res = await dlg.Result;
+        if (res is { Canceled: false }) { Snack.Add(x is null ? "Supplier created" : "Supplier updated", Severity.Success); await RefreshAsync(); }
+    }
+
+    private async Task ToggleAsync(Supplier x)
+    {
+        await MasterFlows.SetActiveAsync(Snack, Svc, MasterKind.Supplier, x.Id, Label(x), !x.IsActive, Me);
+        await RefreshAsync();
+    }
+
+    private async Task DeleteAsync(Supplier x)
+    {
+        await MasterFlows.DeleteAsync(Dialogs, Snack, Svc, MasterKind.Supplier, x.Id, Label(x), Me);
+        await RefreshAsync();
+    }
+}

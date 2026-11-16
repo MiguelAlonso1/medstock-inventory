@@ -49,6 +49,10 @@
     </MudTabPanel>
 
     <MudTabPanel Text="@($"Purchase orders ({_pos.Count})")" Icon="@Icons.Material.Rounded.Receipt">
+        @if (CanManage)
+        {
+            <div class="d-flex justify-end mb-3"><MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="NewPo">New purchase order</MudButton></div>
+        }
         <MudPaper Elevation="0" Class="panel pa-2">
             <MudExpansionPanels Elevation="0" MultiExpansion="true">
                 @foreach (var po in _pos)
@@ -68,9 +72,16 @@
                                 @foreach (var l in po.Lines) { <tr><td>@l.Name</td><td class="text-right">@l.Ordered</td><td class="text-right">@l.Received</td><td class="text-right">@l.UnitCost.ToString("C2", Us)</td></tr> }
                                 </tbody>
                             </MudSimpleTable>
-                            @if (CanManage && po.Status is PurchaseOrderStatus.Ordered or PurchaseOrderStatus.PartiallyReceived)
+                            @if (CanManage && PurchaseOrderRules.CanEdit(po.Status))
                             {
-                                <MudButton Variant="Variant.Filled" Color="Color.Success" Class="mt-3" OnClick="() => Receive(po)" StartIcon="@Icons.Material.Rounded.MoveToInbox">Receive remaining stock</MudButton>
+                                <div class="d-flex flex-wrap gap-2 mt-3">
+                                    <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="() => Receive(po)" StartIcon="@Icons.Material.Rounded.MoveToInbox">Receive remaining stock</MudButton>
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="() => EditPo(po)" StartIcon="@Icons.Material.Rounded.Edit">Edit quantities</MudButton>
+                                    @if (PurchaseOrderRules.CanCancel(po.Status))
+                                    {
+                                        <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="() => CancelPo(po)" StartIcon="@Icons.Material.Rounded.Close">Cancel PO</MudButton>
+                                    }
+                                </div>
                             }
                         </ChildContent>
                     </MudExpansionPanel>
@@ -109,7 +120,7 @@
         _busy = true;
         try
         {
-            var r = await PurchasingSvc.CreatePurchaseOrdersAsync(_selected.Select(s => new NewOrderLine(s.ProductId, s.SuggestedQty)).ToList(), _warehouseId, Actor);
+            var r = await PurchasingSvc.CreatePurchaseOrdersAsync(_selected.Select(s => new NewOrderLine(s.ProductId, s.SuggestedQty)).ToList(), _warehouseId, Me);
             Snack.Add(r.Ok ? $"Created {string.Join(", ", r.Value!)}" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
             if (r.Ok) _selected = [];
             await LoadAsync();
@@ -117,11 +128,39 @@
         finally { _busy = false; }
     }
 
+    private async Task NewPo()
+    {
+        var parameters = new DialogParameters<PoCreateDialog>
+        {
+            { d => d.Suppliers, _lookups?.Suppliers ?? [] }, { d => d.Warehouses, _lookups?.Warehouses ?? [] }, { d => d.Me, Me }
+        };
+        var dlg = await Dialogs.ShowAsync<PoCreateDialog>(null, parameters, new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        var res = await dlg.Result;
+        if (res is { Canceled: false }) { Snack.Add($"{res.Data} created", Severity.Success); await LoadAsync(); }
+    }
+
+    private async Task EditPo(PurchaseOrderView po)
+    {
+        var parameters = new DialogParameters<PoEditDialog> { { d => d.Po, po }, { d => d.Me, Me } };
+        var dlg = await Dialogs.ShowAsync<PoEditDialog>(null, parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        var res = await dlg.Result;
+        if (res is { Canceled: false }) { Snack.Add($"{po.Number} updated", Severity.Success); await LoadAsync(); }
+    }
+
+    private async Task CancelPo(PurchaseOrderView po)
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync($"Cancel {po.Number}?", "The order stays in the list as Cancelled. No stock is affected because nothing was received.", yesText: "Cancel PO", cancelText: "Keep");
+        if (ok != true) return;
+        var r = await PurchasingSvc.CancelAsync(po.Id, Me);
+        Snack.Add(r.Ok ? $"{po.Number} cancelled" : r.Error!, r.Ok ? Severity.Info : Severity.Error);
+        await LoadAsync();
+    }
+
     private async Task Receive(PurchaseOrderView po)
     {
         var ok = await Dialogs.ShowMessageBoxAsync($"Receive {po.Number}?", $"This books the remaining {po.Lines.Sum(l => l.Ordered - l.Received)} units into {po.Warehouse} as new lots and closes the PO.", yesText: "Receive stock", cancelText: "Cancel");
         if (ok != true) return;
-        var r = await PurchasingSvc.ReceiveAsync(po.Id, Actor);
+        var r = await PurchasingSvc.ReceiveAsync(po.Id, Me);
         Snack.Add(r.Ok ? $"{po.Number} received" : r.Error!, r.Ok ? Severity.Success : Severity.Error);
         await LoadAsync();
     }

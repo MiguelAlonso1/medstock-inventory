@@ -53,6 +53,14 @@
                     Alerts @if (_alertCount > 0) { <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled" Class="ml-2 my-0 nav-badge">@(_alertCount > 99 ? "99+" : _alertCount.ToString())</MudChip> }
                 </MudNavLink>
                 <MudNavLink Href="/activity" Icon="@Icons.Material.Rounded.Bolt">Live activity</MudNavLink>
+                <AuthorizeView Roles="@Roles.ManageRoles">
+                    <MudNavGroup Title="Master data" Icon="@Icons.Material.Rounded.Tune" Expanded="@_masterOpen">
+                        <MudNavLink Href="/manage/products" Icon="@Icons.Material.Rounded.Medication">Products</MudNavLink>
+                        <MudNavLink Href="/manage/warehouses" Icon="@Icons.Material.Rounded.Warehouse">Warehouses</MudNavLink>
+                        <MudNavLink Href="/manage/suppliers" Icon="@Icons.Material.Rounded.Factory">Suppliers</MudNavLink>
+                        <MudNavLink Href="/manage/customers" Icon="@Icons.Material.Rounded.Business">Customers</MudNavLink>
+                    </MudNavGroup>
+                </AuthorizeView>
                 <AuthorizeView Roles="@Roles.Admin">
                     <MudNavLink Href="/admin" Icon="@Icons.Material.Rounded.AdminPanelSettings">Admin</MudNavLink>
                 </AuthorizeView>
@@ -102,6 +110,7 @@
     private MudThemeProvider _themeProvider = default!;
     private bool _isDark = true;
     private bool _drawerOpen = true;
+    private bool _masterOpen => Nav.Uri.Contains("/manage/", StringComparison.OrdinalIgnoreCase);
     private int _alertCount;
     private bool _disposed;
 
