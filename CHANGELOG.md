@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.0 - 2026-11-18
+
+"Ask MedStock": a Claude-powered, read-only agentic assistant.
+
+- New `/assistant` page (nav entry "Ask MedStock"): chat with a tool-use loop (max 6 tool rounds), streamed answers and small chips showing which tools were used. Nine read-only tools over the existing query services (`search_products`, `get_stock_by_product`, `list_expiring_lots`, `list_low_stock`, `get_order`, `list_open_orders`, `list_reorder_suggestions`, `list_alerts`, `get_kpis`) with validated inputs and row caps.
+- AI briefing card on the Overview: short daily operations briefing (expiring lots, low stock, cold-chain excursions, shortfalls).
+- Claude Messages API over `HttpClient` + `System.Text.Json` (no SDK, no new package), streaming, prompt caching for system prompt and tool definitions. Config: `Claude:ApiKey` (env `Claude__ApiKey`), `Claude:Model` (default `claude-haiku-5-5`), `Claude:DailyLimit` (200), `Claude:HourlyLimit` (20 per user).
+- Limits: 500-character questions, last 10 turns, 90 s timeout, friendly errors. Without an API key the page and card show a disabled state; the rest of the app is unaffected.
+- CI/CD: the deploy job injects `Claude__ApiKey` into `web.config` only when the `ANTHROPIC_API_KEY` secret is non-empty.
+- Tests with a fake `HttpMessageHandler` (no live calls): tool-use loop, iteration cap, read-only guarantee (tables and ledger unchanged after running every tool), input validation, rate limit and daily cap, disabled state, page access.
+
+
 ## 1.2.0 - 2026-11-16
 
 Full CRUD with role-based permissions and an append-only ledger.

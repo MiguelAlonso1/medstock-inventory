@@ -26,6 +26,8 @@ else
         <MudItem xs="6" md="4" lg="2"><KpiTile Label="Fill rate (30 d)" Value="@($"{_k.FillRatePct:0.0}%")" Hint="units allocated vs ordered" Icon="@Icons.Material.Rounded.TaskAlt" Tone="@(_k.FillRatePct >= 97 ? "success" : "warning")" /></MudItem>
         <MudItem xs="6" md="4" lg="2"><KpiTile Label="Open orders" Value="@_k.OpenOrders.ToString()" Hint="@(_k.OpenExcursions > 0 ? $"{_k.OpenExcursions} cold-chain alert(s)" : "no cold-chain alerts")" Icon="@Icons.Material.Rounded.LocalShipping" Tone="@(_k.OpenExcursions > 0 ? "error" : "primary")" /></MudItem>
 
+        <MudItem xs="12"><AiBriefing /></MudItem>
+
         <MudItem xs="12" lg="8">
             <MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
                 <MudText Typo="Typo.h6" Class="mb-1">Movements per day</MudText>

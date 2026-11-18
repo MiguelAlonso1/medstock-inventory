@@ -1,0 +1,85 @@
+@implements IDisposable
+@inject AssistantService Ai
+
+
+<MudPaper Elevation="0" Class="panel pa-4 pa-md-5">
+    <div class="d-flex align-center justify-space-between flex-wrap gap-2 mb-2">
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Rounded.AutoAwesome" Color="Color.Secondary" />
+            <MudText Typo="Typo.h6">AI briefing</MudText>
+        </div>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.AutoAwesome" Disabled="@(!Ai.Enabled || _busy)" OnClick="GenerateAsync">
+            @(_text.Length > 0 || _error is not null ? "Regenerate" : "Generate briefing")
+        </MudButton>
+    </div>
+    @if (!Ai.Enabled)
+    {
+        <MudText Color="Color.Secondary">AI features need an API key. Set <code>Claude:ApiKey</code> to enable the daily operations briefing.</MudText>
+    }
+    else if (_busy && _text.Length == 0)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Secondary" Size="Size.Small" aria-label="Generating briefing" />
+    }
+    else if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">@_error</MudAlert>
+    }
+    else if (_text.Length == 0)
+    {
+        <MudText Color="Color.Secondary">A short summary of the top risks: expiring lots, low stock, cold-chain excursions and order shortfalls, from read-only lookups of live data.</MudText>
+    }
+    @if (_text.Length > 0)
+    {
+        <MudText Typo="Typo.body1" Class="ai-text">@_text</MudText>
+    }
+    @if (_tools.Count > 0)
+    {
+        <div class="chip-row mt-3">
+            <MudText Typo="Typo.caption" Color="Color.Secondary">Tools used:</MudText>
+            @foreach (var t in _tools)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Rounded.Build">@t</MudChip>
+            }
+        </div>
+    }
+</MudPaper>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthTask { get; set; }
+
+    private string _text = "";
+    private string? _error;
+    private bool _busy;
+    private readonly List<string> _tools = [];
+    private readonly CancellationTokenSource _cts = new();
+
+    private async Task GenerateAsync()
+    {
+        if (_busy) return;
+        var user = (AuthTask is null ? null : (await AuthTask).User.Identity?.Name) ?? "";
+        _busy = true; _error = null; _text = ""; _tools.Clear();
+        StateHasChanged();
+        try
+        {
+            var res = await Ai.BriefAsync(user, e => InvokeAsync(() =>
+            {
+                switch (e.Kind)
+                {
+                    case AssistantEventKind.Text: _text += e.Text; break;
+                    case AssistantEventKind.Reset: _text = ""; break;
+                    case AssistantEventKind.ToolStart: if (!_tools.Contains(e.Text)) _tools.Add(e.Text); break;
+                }
+                StateHasChanged();
+            }), _cts.Token);
+            if (res.Ok) _text = res.Text; else { _text = ""; _error = res.Error; }
+        }
+        catch (OperationCanceledException) { }
+        finally { _busy = false; }
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

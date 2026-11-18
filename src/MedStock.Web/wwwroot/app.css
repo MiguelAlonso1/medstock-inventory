@@ -165,3 +165,15 @@ img { max-width: 100%; }
 .manage-head > div:first-child { flex: 1 1 280px; min-width: 0; }
 .manage-toolbar .mud-input-control { min-width: 220px; }
 .manage-grid .nowrap, .manage-grid .mud-table-head .mud-table-cell { white-space: nowrap; }
+
+/* Ask MedStock */
+.ai-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-log { display: flex; flex-direction: column; gap: 12px; min-height: 280px; }
+.chat-row { display: flex; }
+.chat-row.chat-user { justify-content: flex-end; }
+.chat-bubble { max-width: min(760px, 92%); border-radius: 14px; border: 1px solid var(--mud-palette-lines-default); }
+.chat-bubble-user { background: color-mix(in srgb, var(--mud-palette-primary) 22%, transparent); }
+.chat-bubble-error { border-color: var(--mud-palette-warning); }
+.chat-wait { min-width: 120px; margin-bottom: 6px; }
+.chat-log .mud-chip { height: auto; max-width: 100%; padding-top: 4px; padding-bottom: 4px; }
+.chat-log .mud-chip .mud-chip-content { white-space: normal; overflow-wrap: anywhere; text-align: left; }

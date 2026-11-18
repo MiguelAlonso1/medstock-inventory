@@ -3,6 +3,7 @@ using MedStock.Web.Components;
 using MedStock.Web.Data;
 using MedStock.Web.Endpoints;
 using MedStock.Web.Services;
+using MedStock.Web.Services.Assistant;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -74,6 +75,13 @@ builder.Services.AddSingleton<TransferService>();
 builder.Services.AddSingleton<MasterDataService>();
 builder.Services.AddSingleton<InventoryQueries>();
 builder.Services.AddSingleton<DemoSeeder>();
+// "Ask MedStock": Claude over plain HttpClient. Without Claude:ApiKey the AI features show a disabled state.
+builder.Services.AddSingleton(sp => new ClaudeClient(
+    new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }) { Timeout = TimeSpan.FromSeconds(120) },
+    sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton<AssistantTools>();
+builder.Services.AddSingleton<AssistantLimiter>();
+builder.Services.AddSingleton<AssistantService>();
 builder.Services.AddHostedService<SimulationWorker>();
 
 // Behind IIS/ANCM (out-of-process) the original scheme arrives in X-Forwarded-Proto from 127.0.0.1.

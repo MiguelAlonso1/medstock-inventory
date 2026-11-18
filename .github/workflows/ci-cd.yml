@@ -108,6 +108,33 @@ jobs:
           }
           HELPER
 
+      # "Ask MedStock": inject Claude__ApiKey into web.config ONLY when the ANTHROPIC_API_KEY secret is non-empty.
+      # Done here (deploy job, on the downloaded copy) and not in the build job, because the build artifact of a public
+      # repo is downloadable and must never contain the key. The value goes through an env var, is XML-escaped, never echoed.
+      - name: Inject Claude API key into web.config
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::notice::ANTHROPIC_API_KEY secret is not set; AI features will show the disabled state."
+            exit 0
+          fi
+          python3 - <<'PY'
+          import os, re, sys
+          from xml.sax.saxutils import quoteattr
+          path = "./publish/web.config"
+          text = open(path, encoding="utf-8").read()
+          block = '>\n        <environmentVariables>\n          <environmentVariable name="Claude__ApiKey" value=%s />\n        </environmentVariables>\n      </aspNetCore>' % quoteattr(os.environ["ANTHROPIC_API_KEY"])
+          new, n = re.subn(r'(<aspNetCore\b[^>]*?)\s*/>', lambda m: m.group(1) + block, text, count=1)
+          if n != 1:
+              print("::error::Could not find the <aspNetCore /> element in web.config")
+              sys.exit(1)
+          import xml.dom.minidom
+          xml.dom.minidom.parseString(new.encode("utf-8"))  # well-formedness check; raises (without printing the value) if broken
+          open(path, "w", encoding="utf-8").write(new)
+          print("Claude__ApiKey added to web.config")
+          PY
+
       # Write preflight: runs BEFORE the site goes offline. If we cannot create/write/remove inside the site
       # folder, the job fails here and the live site is untouched.
       - name: Preflight write probe

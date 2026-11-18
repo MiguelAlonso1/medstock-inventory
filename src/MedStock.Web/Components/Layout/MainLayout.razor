@@ -53,6 +53,7 @@
                     Alerts @if (_alertCount > 0) { <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled" Class="ml-2 my-0 nav-badge">@(_alertCount > 99 ? "99+" : _alertCount.ToString())</MudChip> }
                 </MudNavLink>
                 <MudNavLink Href="/activity" Icon="@Icons.Material.Rounded.Bolt">Live activity</MudNavLink>
+                <MudNavLink Href="/assistant" Icon="@Icons.Material.Rounded.AutoAwesome">Ask MedStock</MudNavLink>
                 <AuthorizeView Roles="@Roles.ManageRoles">
                     <MudNavGroup Title="Master data" Icon="@Icons.Material.Rounded.Tune" Expanded="@_masterOpen">
                         <MudNavLink Href="/manage/products" Icon="@Icons.Material.Rounded.Medication">Products</MudNavLink>

@@ -1,0 +1,129 @@
+@page "/assistant"
+@attribute [Authorize]
+@implements IDisposable
+@inject AssistantService Ai
+
+
+<PageTitle>Ask MedStock - MedStock</PageTitle>
+
+<div class="page-head">
+    <div>
+        <MudText Typo="Typo.h3" Class="mb-1">Ask MedStock</MudText>
+        <MudText Color="Color.Secondary">An AI inventory assistant. It looks things up with read-only tools and answers only from your live data.</MudText>
+    </div>
+</div>
+
+@if (!Ai.Enabled)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Icon="@Icons.Material.Rounded.AutoAwesome" Class="mb-4">
+        AI features need an API key. Set <code>Claude:ApiKey</code> (environment variable <code>Claude__ApiKey</code>) to enable this page.
+    </MudAlert>
+}
+
+<MudPaper Elevation="0" Class="panel pa-3 pa-md-5 chat-panel">
+    <div class="chat-log" role="log" aria-live="polite">
+        @if (_messages.Count == 0)
+        {
+            <MudText Color="Color.Secondary" Class="mb-3">Try one of these:</MudText>
+            <div class="chip-row">
+                @foreach (var s in Suggestions)
+                {
+                    <MudChip T="string" Variant="Variant.Outlined" Color="Color.Primary" Disabled="@(!Ai.Enabled || _busy)" OnClick="() => AskAsync(s)">@s</MudChip>
+                }
+            </div>
+        }
+        @foreach (var m in _messages)
+        {
+            <div class="@("chat-row " + (m.User ? "chat-user" : "chat-ai"))">
+                <MudPaper Elevation="0" Class="@("chat-bubble pa-3 " + (m.User ? "chat-bubble-user" : "chat-bubble-ai") + (m.Error ? " chat-bubble-error" : ""))">
+                    @if (!m.User && m.Text.Length == 0 && m.Pending)
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Secondary" Size="Size.Small" Class="chat-wait" aria-label="Thinking" />
+                    }
+                    <MudText Typo="Typo.body1" Class="ai-text">@m.Text</MudText>
+                    @if (m.Tools.Count > 0)
+                    {
+                        <div class="chip-row mt-2">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Tools used:</MudText>
+                            @foreach (var t in m.Tools)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Rounded.Build">@t</MudChip>
+                            }
+                        </div>
+                    }
+                </MudPaper>
+            </div>
+        }
+    </div>
+
+    <div class="chat-input d-flex align-center gap-2 mt-3">
+        <MudTextField T="string" @bind-Value="_input" Immediate="true" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="@AssistantService.MaxQuestionChars"
+                      Placeholder="Ask about stock, expiry, orders or reorders" Disabled="@(!Ai.Enabled || _busy)"
+                      OnKeyDown="OnKey" aria-label="Your question" Class="flex-grow-1" />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Send" Disabled="@(!Ai.Enabled || _busy || string.IsNullOrWhiteSpace(_input))"
+                   OnClick="() => AskAsync(_input)">Ask</MudButton>
+    </div>
+    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2 d-block">AI answers can be wrong. They come from read-only lookups and never change data. Max @AssistantService.MaxQuestionChars characters per question.</MudText>
+</MudPaper>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthTask { get; set; }
+
+    private static readonly string[] Suggestions =
+    [
+        "Which cold-chain lots expire in the next 30 days at MIA?",
+        "What should I reorder this week?",
+        "Which open orders are short?",
+        "Summarize the current alerts."
+    ];
+
+    private sealed class Msg { public bool User; public string Text = ""; public bool Error; public bool Pending; public List<string> Tools = []; }
+
+    private readonly List<Msg> _messages = [];
+    private string _input = "";
+    private bool _busy;
+    private readonly CancellationTokenSource _cts = new();
+
+    private async Task OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !_busy && Ai.Enabled && !string.IsNullOrWhiteSpace(_input)) await AskAsync(_input);
+    }
+
+    private async Task AskAsync(string question)
+    {
+        question = (question ?? "").Trim();
+        if (_busy || question.Length == 0 || !Ai.Enabled) return;
+        var user = (AuthTask is null ? null : (await AuthTask).User.Identity?.Name) ?? "";
+        var history = _messages.Where(m => !m.Error && m.Text.Length > 0).Select(m => new ChatTurn(m.User ? "user" : "assistant", m.Text)).ToList();
+        _messages.Add(new Msg { User = true, Text = question });
+        var reply = new Msg { Pending = true };
+        _messages.Add(reply);
+        _input = "";
+        _busy = true;
+        StateHasChanged();
+        try
+        {
+            var res = await Ai.AskAsync(user, history, question, e => InvokeAsync(() =>
+            {
+                switch (e.Kind)
+                {
+                    case AssistantEventKind.Text: reply.Text += e.Text; break;
+                    case AssistantEventKind.Reset: reply.Text = ""; break;
+                    case AssistantEventKind.ToolStart: if (!reply.Tools.Contains(e.Text)) reply.Tools.Add(e.Text); break;
+                }
+                StateHasChanged();
+            }), _cts.Token);
+            if (res.Ok) { reply.Text = res.Text; }
+            else { reply.Error = true; reply.Text = res.Error ?? "Something went wrong."; }
+            foreach (var t in res.Tools) if (!reply.Tools.Contains(t)) reply.Tools.Add(t);
+        }
+        catch (OperationCanceledException) { reply.Error = true; reply.Text = "Cancelled."; }
+        finally { _busy = false; reply.Pending = false; }
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

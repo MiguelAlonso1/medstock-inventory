@@ -28,7 +28,45 @@ A healthcare-style **inventory and order management system** with real-time upda
 - **Alerts**: low stock, expiring lots (30/60/90 days, expired), cold-chain temperature excursions.
 - **Real time**: a background simulator creates orders, ships them, receives POs, transfers stock and raises alerts every few seconds. Every connected user sees dashboards, grids and the feed update live. Toggle it from the app bar or the Admin page.
 - **Auth**: Identity with seeded roles (Admin, Warehouse Manager, Picker, Viewer), one-click "Try the demo" sign-in (plain form posts), role-based authorization, Admin-only "Reset demo data".
+- **Ask MedStock (AI)**: an agentic, read-only inventory assistant powered by Claude (see below), plus an **AI briefing** card on the Overview.
 - Responsive, dark/light (cookie based), accessible (skip link, labels, focus states), zero build warnings.
+
+## Ask MedStock: agentic assistant (Claude)
+
+`/assistant` (nav entry "Ask MedStock", any signed-in role) is a chat where you ask questions in natural language, for example "Which cold-chain lots expire in the next 30 days at MIA?", "What should I reorder this week?" or "Why is SO-001042 short?". Claude runs a **tool-use loop** (Messages API over plain `HttpClient` + `System.Text.Json`, no SDK or extra library, streaming responses) and calls **read-only tools** backed by the existing query services. The tools used are shown as small chips under each answer. The Overview has an **AI briefing** card that generates a short daily operations briefing from the same tools.
+
+Tools (all read-only, validated inputs, row caps of 25, compact JSON; no mutating service method is reachable):
+
+| Tool | Backed by | Purpose |
+| --- | --- | --- |
+| `search_products` | `InventoryQueries.SearchProductsAsync` | find products by name, SKU or NDC |
+| `get_stock_by_product` | `InventoryQueries.GetProductAsync` | totals, warehouses, lots and expiry, on order, recent movements |
+| `list_expiring_lots` | `InventoryQueries.GetExpiryAlertsAsync` | lots expiring within N days, warehouse and cold-chain filters |
+| `list_low_stock` | `InventoryQueries.GetLowStockAsync` | products at or below minimum |
+| `get_order` | `OrderService.GetAsync` | one order with lines, allocated lots and shortfall |
+| `list_open_orders` | `OrderService.ListAsync` | open or filtered orders, shortfall only |
+| `list_reorder_suggestions` | `PurchasingService.GetSuggestionsAsync` | what to reorder, supplier and cost |
+| `list_alerts` | `InventoryQueries.GetAlertSummaryAsync` / `GetExcursionsAsync` | alert counts and cold-chain excursions |
+| `get_kpis` | `InventoryQueries.GetKpisAsync` | network KPIs |
+
+Safeguards: answers only from tool results (never invented numbers), max 6 tool rounds per question (then a final answer is forced without tools), questions limited to 500 characters, last 10 turns of history, 90 s timeout, friendly errors that never expose API details, per-user rate limit (`Claude:HourlyLimit`, default 20 per hour) and a global daily cap (`Claude:DailyLimit`, default 200). The system prompt and tool definitions use prompt caching. Authorization is server-side (`[Authorize]` page plus a signed-in user required by the service).
+
+Configuration:
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `Claude:ApiKey` (env `Claude__ApiKey`) | none | Without it the page and the briefing card show "AI features need an API key"; nothing else is affected |
+| `Claude:Model` | `claude-haiku-5-5` | |
+| `Claude:DailyLimit` | 200 | questions per UTC day, all users |
+| `Claude:HourlyLimit` | 20 | questions per user per hour |
+
+Locally: `dotnet user-secrets` or `Claude__ApiKey=...` before `dotnet run`. In production set the repository secret and deploy:
+
+```
+gh secret set ANTHROPIC_API_KEY -R MiguelAlonso1/medstock-inventory
+```
+
+The deploy job writes `Claude__ApiKey` into the published `web.config` `<environmentVariables>` only when the secret is non-empty (XML-escaped, never printed). This happens in the deploy job on the downloaded copy, not in the build job, because the build artifact of a public repository is downloadable and must never contain the key.
 
 ## Architecture
 
