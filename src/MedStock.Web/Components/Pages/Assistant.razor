@@ -9,14 +9,14 @@
 <div class="page-head">
     <div>
         <MudText Typo="Typo.h3" Class="mb-1">Ask MedStock</MudText>
-        <MudText Color="Color.Secondary">An AI inventory assistant. It looks things up with read-only tools and answers only from your live data.</MudText>
+        <MudText Color="Color.Secondary">An AI inventory assistant (Gemini or Claude). It looks things up with read-only tools and answers only from your live data.</MudText>
     </div>
 </div>
 
 @if (!Ai.Enabled)
 {
     <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Icon="@Icons.Material.Rounded.AutoAwesome" Class="mb-4">
-        AI features need an API key. Set <code>Claude:ApiKey</code> (environment variable <code>Claude__ApiKey</code>) to enable this page.
+        AI features need an API key. Set <code>Ai:Gemini:ApiKey</code> (environment variable <code>Ai__Gemini__ApiKey</code>, free key from Google AI Studio) to enable this page.
     </MudAlert>
 }
 

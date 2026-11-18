@@ -5,32 +5,39 @@ using System.Text.Json.Nodes;
 
 namespace MedStock.Web.Services.Assistant;
 
-/// <summary>One content block of a streamed assistant message (text or tool_use).</summary>
-public sealed record ClaudeBlock(string Type, string Text, string? Id, string? Name, string InputJson);
-
-public sealed record ClaudeResponse(string StopReason, IReadOnlyList<ClaudeBlock> Blocks);
-
-public sealed class ClaudeApiException(int status, string message) : Exception(message)
-{
-    public int Status { get; } = status;
-}
-
 /// <summary>
-/// Minimal Messages API client over HttpClient + System.Text.Json (no SDK; the project allows no extra libraries).
-/// Sends a streaming request and parses the server-sent events.
+/// Claude via the Messages API over HttpClient + System.Text.Json (no SDK; the project allows no extra libraries).
+/// Streams server-sent events, uses prompt caching for tools + system prompt.
 /// </summary>
-public sealed class ClaudeClient(HttpClient http, IConfiguration cfg)
+public sealed class AnthropicProvider(HttpClient http, IConfiguration cfg) : IAiProvider
 {
     public const string ApiVersion = "2023-06-01";
 
+    public string Name => "Anthropic";
     public string? ApiKey => cfg["Claude:ApiKey"];
     public bool Enabled => !string.IsNullOrWhiteSpace(ApiKey);
+    public string Model => cfg["Claude:Model"] is { Length: > 0 } m ? m : "claude-haiku-5-5";
     private string Endpoint => (cfg["Claude:BaseUrl"] is { Length: > 0 } b ? b.TrimEnd('/') : "https://api.anthropic.com") + "/v1/messages";
 
-    public async Task<ClaudeResponse> StreamAsync(JsonObject body, Func<string, Task> onText, CancellationToken ct)
+    public async Task<AiResponse> CompleteAsync(string system, IReadOnlyList<AiMessage> messages, bool allowTools, Func<string, Task> onText, CancellationToken ct)
     {
         if (!Enabled) throw new InvalidOperationException("Claude API key is not configured.");
-        body["stream"] = true;
+
+        // Prompt caching: tools render first, then system; breakpoints on the last tool and on the system block.
+        var tools = AssistantTools.Definitions();
+        tools[^1]!["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
+        var body = new JsonObject
+        {
+            ["model"] = Model,
+            ["max_tokens"] = 1500,
+            ["stream"] = true,
+            ["system"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = system, ["cache_control"] = new JsonObject { ["type"] = "ephemeral" } }),
+            ["tools"] = tools,
+            ["thinking"] = new JsonObject { ["type"] = "disabled" },
+            ["messages"] = ToWire(messages)
+        };
+        if (!allowTools) body["tool_choice"] = new JsonObject { ["type"] = "none" };
+
         using var req = new HttpRequestMessage(HttpMethod.Post, Endpoint) { Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json") };
         req.Headers.TryAddWithoutValidation("x-api-key", ApiKey);
         req.Headers.TryAddWithoutValidation("anthropic-version", ApiVersion);
@@ -38,10 +45,7 @@ public sealed class ClaudeClient(HttpClient http, IConfiguration cfg)
 
         using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!res.IsSuccessStatusCode)
-        {
-            var text = await res.Content.ReadAsStringAsync(ct);
-            throw new ClaudeApiException((int)res.StatusCode, ExtractError(text));
-        }
+            throw new AiProviderException((int)res.StatusCode, ExtractError(await res.Content.ReadAsStringAsync(ct)));
 
         var blocks = new SortedDictionary<int, (string Type, StringBuilder Text, string? Id, string? Name, StringBuilder Json)>();
         var stop = "end_turn";
@@ -89,10 +93,43 @@ public sealed class ClaudeClient(HttpClient http, IConfiguration cfg)
                     if (root.GetProperty("delta").TryGetProperty("stop_reason", out var sr) && sr.ValueKind == JsonValueKind.String) stop = sr.GetString()!;
                     break;
                 case "error":
-                    throw new ClaudeApiException(529, root.TryGetProperty("error", out var e) && e.TryGetProperty("message", out var m) ? m.GetString() ?? "stream error" : "stream error");
+                    throw new AiProviderException(529, root.TryGetProperty("error", out var e) && e.TryGetProperty("message", out var m) ? m.GetString() ?? "stream error" : "stream error");
             }
         }
-        return new ClaudeResponse(stop, blocks.Values.Select(b => new ClaudeBlock(b.Type, b.Text.ToString(), b.Id, b.Name, b.Json.ToString())).ToList());
+
+        var text = string.Concat(blocks.Values.Where(b => b.Type == "text").Select(b => b.Text.ToString()));
+        var calls = blocks.Values.Where(b => b.Type == "tool_use").Select(b => new AiToolCall(b.Id ?? "", b.Name ?? "", b.Json.ToString())).ToList();
+        var kind = stop switch { "tool_use" => AiStop.ToolUse, "max_tokens" => AiStop.MaxTokens, "refusal" => AiStop.Refusal, _ => AiStop.Done };
+        return new AiResponse(kind, text, calls);
+    }
+
+    private static JsonArray ToWire(IReadOnlyList<AiMessage> messages)
+    {
+        var arr = new JsonArray();
+        foreach (var m in messages)
+        {
+            if (m.Results is { Count: > 0 })
+            {
+                var content = new JsonArray();
+                foreach (var r in m.Results)
+                {
+                    var tr = new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = r.CallId, ["content"] = r.Json };
+                    if (r.IsError) tr["is_error"] = true;
+                    content.Add(tr);
+                }
+                arr.Add(new JsonObject { ["role"] = "user", ["content"] = content });
+            }
+            else if (m.Calls is { Count: > 0 })
+            {
+                var content = new JsonArray();
+                if (m.Text.Length > 0) content.Add(new JsonObject { ["type"] = "text", ["text"] = m.Text });
+                foreach (var c in m.Calls)
+                    content.Add(new JsonObject { ["type"] = "tool_use", ["id"] = c.Id, ["name"] = c.Name, ["input"] = JsonNode.Parse(string.IsNullOrWhiteSpace(c.InputJson) ? "{}" : c.InputJson) });
+                arr.Add(new JsonObject { ["role"] = "assistant", ["content"] = content });
+            }
+            else arr.Add(new JsonObject { ["role"] = m.Role, ["content"] = m.Text });
+        }
+        return arr;
     }
 
     private static string ExtractError(string body)

@@ -76,9 +76,8 @@ builder.Services.AddSingleton<MasterDataService>();
 builder.Services.AddSingleton<InventoryQueries>();
 builder.Services.AddSingleton<DemoSeeder>();
 // "Ask MedStock": Claude over plain HttpClient. Without Claude:ApiKey the AI features show a disabled state.
-builder.Services.AddSingleton(sp => new ClaudeClient(
-    new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }) { Timeout = TimeSpan.FromSeconds(120) },
-    sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton<IAiProvider>(sp => AiProviderSelector.Create(sp.GetRequiredService<IConfiguration>(),
+    new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) }) { Timeout = TimeSpan.FromSeconds(120) }));
 builder.Services.AddSingleton<AssistantTools>();
 builder.Services.AddSingleton<AssistantLimiter>();
 builder.Services.AddSingleton<AssistantService>();

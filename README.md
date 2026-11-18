@@ -28,12 +28,12 @@ A healthcare-style **inventory and order management system** with real-time upda
 - **Alerts**: low stock, expiring lots (30/60/90 days, expired), cold-chain temperature excursions.
 - **Real time**: a background simulator creates orders, ships them, receives POs, transfers stock and raises alerts every few seconds. Every connected user sees dashboards, grids and the feed update live. Toggle it from the app bar or the Admin page.
 - **Auth**: Identity with seeded roles (Admin, Warehouse Manager, Picker, Viewer), one-click "Try the demo" sign-in (plain form posts), role-based authorization, Admin-only "Reset demo data".
-- **Ask MedStock (AI)**: an agentic, read-only inventory assistant powered by Claude (see below), plus an **AI briefing** card on the Overview.
+- **Ask MedStock (AI)**: an agentic, read-only inventory assistant powered by Google Gemini (free tier) or Claude (see below), plus an **AI briefing** card on the Overview.
 - Responsive, dark/light (cookie based), accessible (skip link, labels, focus states), zero build warnings.
 
-## Ask MedStock: agentic assistant (Claude)
+## Ask MedStock: agentic assistant (Gemini free tier or Claude)
 
-`/assistant` (nav entry "Ask MedStock", any signed-in role) is a chat where you ask questions in natural language, for example "Which cold-chain lots expire in the next 30 days at MIA?", "What should I reorder this week?" or "Why is SO-001042 short?". Claude runs a **tool-use loop** (Messages API over plain `HttpClient` + `System.Text.Json`, no SDK or extra library, streaming responses) and calls **read-only tools** backed by the existing query services. The tools used are shown as small chips under each answer. The Overview has an **AI briefing** card that generates a short daily operations briefing from the same tools.
+`/assistant` (nav entry "Ask MedStock", any signed-in role) is a chat where you ask questions in natural language, for example "Which cold-chain lots expire in the next 30 days at MIA?", "What should I reorder this week?" or "Why is SO-001042 short?". The model runs a **tool-use loop** and calls **read-only tools** backed by the existing query services; the tools used are shown as small chips under each answer and the final answer is streamed. The Overview has an **AI briefing** card that generates a short daily operations briefing from the same tools. Both providers are called with plain `HttpClient` + `System.Text.Json` (no SDK, no extra library) behind one `IAiProvider` interface, selected with `Ai:Provider`.
 
 Tools (all read-only, validated inputs, row caps of 25, compact JSON; no mutating service method is reachable):
 
@@ -49,24 +49,27 @@ Tools (all read-only, validated inputs, row caps of 25, compact JSON; no mutatin
 | `list_alerts` | `InventoryQueries.GetAlertSummaryAsync` / `GetExcursionsAsync` | alert counts and cold-chain excursions |
 | `get_kpis` | `InventoryQueries.GetKpisAsync` | network KPIs |
 
-Safeguards: answers only from tool results (never invented numbers), max 6 tool rounds per question (then a final answer is forced without tools), questions limited to 500 characters, last 10 turns of history, 90 s timeout, friendly errors that never expose API details, per-user rate limit (`Claude:HourlyLimit`, default 20 per hour) and a global daily cap (`Claude:DailyLimit`, default 200). The system prompt and tool definitions use prompt caching. Authorization is server-side (`[Authorize]` page plus a signed-in user required by the service).
+Safeguards: answers only from tool results (never invented numbers), max 6 tool rounds per question (then a final answer is forced without tools), questions limited to 500 characters, last 10 turns of history, 90 s timeout, friendly errors (including 429 from the free tier) that never expose API details, per-user rate limit (`Claude:HourlyLimit`, default 20 per hour) and a global daily cap (`Claude:DailyLimit`, default 200). Authorization is server-side (`[Authorize]` page plus a signed-in user required by the service).
 
 Configuration:
 
 | Setting | Default | Notes |
 | --- | --- | --- |
-| `Claude:ApiKey` (env `Claude__ApiKey`) | none | Without it the page and the briefing card show "AI features need an API key"; nothing else is affected |
-| `Claude:Model` | `claude-haiku-5-5` | |
-| `Claude:DailyLimit` | 200 | questions per UTC day, all users |
-| `Claude:HourlyLimit` | 20 | questions per user per hour |
+| `Ai:Provider` | `Gemini` | `Gemini` (free tier) or `Anthropic`. An unknown value shows the disabled state |
+| `Ai:Gemini:ApiKey` (env `Ai__Gemini__ApiKey`) | none | Free key from <https://aistudio.google.com/apikey>. Without a key for the selected provider the page and the briefing card show "AI features need an API key"; nothing else is affected |
+| `Ai:Gemini:Model` | `gemini-3.5-flash-lite` | any Gemini Flash model with function calling that your key can use |
+| `Claude:ApiKey` (env `Claude__ApiKey`), `Claude:Model` | none, `claude-haiku-5-5` | only when `Ai:Provider=Anthropic` (paid; prompt caching on tools and system prompt) |
+| `Claude:DailyLimit` / `Claude:HourlyLimit` | 200 / 20 | questions per UTC day (all users) / per user per hour, both providers |
 
-Locally: `dotnet user-secrets` or `Claude__ApiKey=...` before `dotnet run`. In production set the repository secret and deploy:
+Locally: `dotnet user-secrets set Ai:Gemini:ApiKey <key> --project src/MedStock.Web` or set `Ai__Gemini__ApiKey` before `dotnet run`. In production set the repository secret (and, to switch provider, the repository variable `AI_PROVIDER`) and deploy:
 
 ```
-gh secret set ANTHROPIC_API_KEY -R MiguelAlonso1/medstock-inventory
+gh secret set GEMINI_API_KEY -R MiguelAlonso1/medstock-inventory
+# optional: gh variable set AI_PROVIDER --body Gemini -R MiguelAlonso1/medstock-inventory
+# optional paid provider: gh secret set ANTHROPIC_API_KEY -R MiguelAlonso1/medstock-inventory
 ```
 
-The deploy job writes `Claude__ApiKey` into the published `web.config` `<environmentVariables>` only when the secret is non-empty (XML-escaped, never printed). This happens in the deploy job on the downloaded copy, not in the build job, because the build artifact of a public repository is downloadable and must never contain the key.
+The deploy job writes `Ai__Gemini__ApiKey`, `Claude__ApiKey` and `Ai__Provider` into the published `web.config` `<environmentVariables>`, each only when its secret or variable is non-empty (XML-escaped, never printed). This happens in the deploy job on the downloaded copy, not in the build job, because the build artifact of a public repository is downloadable and must never contain a key.
 
 ## Architecture
 

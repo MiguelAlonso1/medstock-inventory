@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace MedStock.Web.Services.Assistant;
 
@@ -44,7 +43,7 @@ public sealed class AssistantLimiter(TimeProvider clock, IConfiguration cfg)
 }
 
 /// <summary>"Ask MedStock": Claude drives a read-only tool-use loop over the existing query services.</summary>
-public sealed class AssistantService(ClaudeClient claude, AssistantTools tools, AssistantLimiter limiter, IConfiguration cfg)
+public sealed class AssistantService(IAiProvider provider, AssistantTools tools, AssistantLimiter limiter)
 {
     public const int MaxQuestionChars = 500;
     public const int MaxHistoryTurns = 10;
@@ -67,8 +66,9 @@ public sealed class AssistantService(ClaudeClient claude, AssistantTools tools, 
         "Output at most 6 short '- ' lines, ordered by urgency, covering: expiring or expired lots, low stock, cold-chain excursions, order shortfalls. Name concrete SKUs, lots, warehouses or order numbers. " +
         "Start with one sentence summarising overall health. If a risk area has nothing to report, say so in a few words.";
 
-    public bool Enabled => claude.Enabled;
-    public string Model => cfg["Claude:Model"] is { Length: > 0 } m ? m : "claude-haiku-5-5";
+    public bool Enabled => provider.Enabled;
+    public string Provider => provider.Name;
+    public string Model => provider.Model;
 
     public Task<AssistantResult> AskAsync(string user, IReadOnlyList<ChatTurn> history, string question, Func<AssistantEvent, Task> emit, CancellationToken ct = default)
     {
@@ -84,7 +84,7 @@ public sealed class AssistantService(ClaudeClient claude, AssistantTools tools, 
     private async Task<AssistantResult> RunAsync(string user, IReadOnlyList<ChatTurn> history, string question, Func<AssistantEvent, Task> emit, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(user)) return AssistantResult.Fail("Sign in to use the assistant.");
-        if (!claude.Enabled) return AssistantResult.Fail("AI features need an API key.");
+        if (!provider.Enabled) return AssistantResult.Fail("AI features need an API key.");
         if (limiter.TryAcquire(user) is { } denied) return AssistantResult.Fail(denied);
 
         var used = new List<string>();
@@ -96,7 +96,7 @@ public sealed class AssistantService(ClaudeClient claude, AssistantTools tools, 
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (OperationCanceledException) { return AssistantResult.Fail("The assistant took too long to answer. Please try again.", used); }
-        catch (ClaudeApiException ex) { return AssistantResult.Fail(FriendlyApiError(ex.Status), used); }
+        catch (AiProviderException ex) { return AssistantResult.Fail(FriendlyApiError(ex.Status), used); }
         catch (HttpRequestException) { return AssistantResult.Fail("Could not reach the AI service. Please try again in a moment.", used); }
         catch (JsonException) { return AssistantResult.Fail("The AI service sent an unreadable reply. Please try again.", used); }
     }
@@ -112,46 +112,27 @@ public sealed class AssistantService(ClaudeClient claude, AssistantTools tools, 
     private async Task<AssistantResult> LoopAsync(IReadOnlyList<ChatTurn> history, string question, Func<AssistantEvent, Task> emit, List<string> used, CancellationToken ct)
     {
         var messages = BuildMessages(history, question);
-        var toolDefs = AssistantTools.Definitions();
-        // Prompt caching: tools render first, then system; one breakpoint on the last tool and one on the system block.
-        toolDefs[^1]!["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
 
         for (var iteration = 0; ; iteration++)
         {
             var finalRound = iteration >= MaxToolIterations;
-            var body = new JsonObject
-            {
-                ["model"] = Model,
-                ["max_tokens"] = 1500,
-                ["system"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = SystemPrompt, ["cache_control"] = new JsonObject { ["type"] = "ephemeral" } }),
-                ["tools"] = toolDefs.DeepClone(),
-                ["thinking"] = new JsonObject { ["type"] = "disabled" },
-                ["messages"] = messages.DeepClone()
-            };
-            if (finalRound) body["tool_choice"] = new JsonObject { ["type"] = "none" };
+            var res = await provider.CompleteAsync(SystemPrompt, messages, !finalRound, t => emit(new AssistantEvent(AssistantEventKind.Text, t)), ct);
 
-            var res = await claude.StreamAsync(body, t => emit(new AssistantEvent(AssistantEventKind.Text, t)), ct);
-            var text = string.Concat(res.Blocks.Where(b => b.Type == "text").Select(b => b.Text));
-            var calls = res.Blocks.Where(b => b.Type == "tool_use").ToList();
-
-            if (res.StopReason != "tool_use" || calls.Count == 0 || finalRound)
+            if (res.Stop != AiStop.ToolUse || res.Calls.Count == 0 || finalRound)
             {
                 var distinct = used.Distinct().ToList();
-                if (res.StopReason == "refusal") return AssistantResult.Fail("The AI service declined to answer that request.", distinct);
+                if (res.Stop == AiStop.Refusal) return AssistantResult.Fail("The AI service declined to answer that request.", distinct);
+                var text = res.Text;
                 if (string.IsNullOrWhiteSpace(text)) return AssistantResult.Fail("The assistant did not produce an answer. Please rephrase and try again.", distinct);
-                if (res.StopReason == "max_tokens") text += " [answer cut short]";
+                if (res.Stop == AiStop.MaxTokens) text += " [answer cut short]";
                 return new AssistantResult(true, text.Trim(), null, distinct);
             }
 
             // Text written before tool calls is scratch narration; the UI discards it and keeps only the final answer.
             await emit(new AssistantEvent(AssistantEventKind.Reset, ""));
-            var assistant = new JsonArray();
-            var results = new JsonArray();
-            foreach (var b in res.Blocks)
-            {
-                if (b.Type == "text" && b.Text.Length > 0) assistant.Add(new JsonObject { ["type"] = "text", ["text"] = b.Text });
-            }
-            foreach (var c in calls)
+            var calls = new List<AiToolCall>();
+            var results = new List<AiToolResult>();
+            foreach (var c in res.Calls)
             {
                 JsonElement input = default;
                 var parsed = true;
@@ -162,35 +143,32 @@ public sealed class AssistantService(ClaudeClient claude, AssistantTools tools, 
                 }
                 catch (JsonException) { parsed = false; }
 
-                assistant.Add(new JsonObject { ["type"] = "tool_use", ["id"] = c.Id, ["name"] = c.Name, ["input"] = parsed ? JsonNode.Parse(input.GetRawText()) : new JsonObject() });
-                used.Add(c.Name ?? "?");
-                await emit(new AssistantEvent(AssistantEventKind.ToolStart, c.Name ?? "?"));
-                var r = parsed ? await tools.ExecuteAsync(c.Name ?? "", input, ct) : new ToolResult("{\"error\":\"INVALID_JSON: tool input was not valid JSON.\"}", true);
-                var tr = new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = c.Id, ["content"] = r.Json };
-                if (r.IsError) tr["is_error"] = true;
-                results.Add(tr);
+                calls.Add(c with { InputJson = parsed ? (string.IsNullOrWhiteSpace(c.InputJson) ? "{}" : c.InputJson) : "{}" });
+                used.Add(c.Name);
+                await emit(new AssistantEvent(AssistantEventKind.ToolStart, c.Name));
+                var r = parsed ? await tools.ExecuteAsync(c.Name, input, ct) : new ToolResult("{\"error\":\"INVALID_JSON: tool input was not valid JSON.\"}", true);
+                results.Add(new AiToolResult(c.Id, c.Name, r.Json, r.IsError));
             }
-            messages.Add(new JsonObject { ["role"] = "assistant", ["content"] = assistant });
-            messages.Add(new JsonObject { ["role"] = "user", ["content"] = results });
+            messages.Add(new AiMessage("assistant", res.Text, calls, null, res.Raw));
+            messages.Add(new AiMessage("user", "", null, results));
         }
     }
 
-    internal static JsonArray BuildMessages(IReadOnlyList<ChatTurn> history, string question)
+    internal static List<AiMessage> BuildMessages(IReadOnlyList<ChatTurn> history, string question)
     {
         var turns = history.Where(h => (h.Role is "user" or "assistant") && !string.IsNullOrWhiteSpace(h.Text))
             .TakeLast(MaxHistoryTurns).ToList();
-        var messages = new JsonArray();
+        var messages = new List<AiMessage>();
         string? last = null;
         foreach (var t in turns)
         {
             if (last is null && t.Role != "user") continue;      // must start with a user turn
-            if (t.Role == last) { messages.RemoveAt(messages.Count - 1); } // keep the later of two same-role turns
-            var text = t.Text.Length > 4000 ? t.Text[..4000] : t.Text;
-            messages.Add(new JsonObject { ["role"] = t.Role, ["content"] = text });
+            if (t.Role == last) messages.RemoveAt(messages.Count - 1); // keep the later of two same-role turns
+            messages.Add(new AiMessage(t.Role, t.Text.Length > 4000 ? t.Text[..4000] : t.Text));
             last = t.Role;
         }
         if (last == "user") messages.RemoveAt(messages.Count - 1); // the new question follows an assistant turn (or nothing)
-        messages.Add(new JsonObject { ["role"] = "user", ["content"] = question });
+        messages.Add(new AiMessage("user", question));
         return messages;
     }
 }

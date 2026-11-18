@@ -69,11 +69,11 @@ public class AssistantTests(MedStockFactory app) : IClassFixture<MedStockFactory
     {
         cfg ??= Cfg();
         var fake = new FakeClaude(respond);
-        var claude = new ClaudeClient(new HttpClient(fake), cfg);
+        var claude = new AnthropicProvider(new HttpClient(fake), cfg);
         var limiter = new AssistantLimiter(clock ?? TimeProvider.System, cfg);
         var tools = new AssistantTools(app.Services.GetRequiredService<InventoryQueries>(), app.Services.GetRequiredService<OrderService>(),
             app.Services.GetRequiredService<PurchasingService>(), TimeProvider.System);
-        return (new AssistantService(claude, tools, limiter, cfg), fake, limiter);
+        return (new AssistantService(claude, tools, limiter), fake, limiter);
     }
 
     private static Task Ignore(AssistantEvent _) => Task.CompletedTask;
@@ -370,5 +370,170 @@ public class AssistantTests(MedStockFactory app) : IClassFixture<MedStockFactory
 
         var overview = await (await app.LoginAsync(Roles.Picker)).GetStringAsync("/");
         Assert.Contains("AI briefing", overview);
+    }
+}
+
+/// <summary>The assistant only knows IAiProvider: a scripted provider drives the same loop, and Ai:Provider selects the implementation.</summary>
+public class AiProviderAbstractionTests(MedStockFactory app) : IClassFixture<MedStockFactory>
+{
+    private sealed class ScriptedProvider(Func<int, IReadOnlyList<AiMessage>, bool, AiResponse> script) : IAiProvider
+    {
+        public string Name => "Scripted";
+        public string Model => "scripted-1";
+        public bool Enabled => true;
+        public int Calls;
+        public List<IReadOnlyList<AiMessage>> Seen = [];
+        public async Task<AiResponse> CompleteAsync(string system, IReadOnlyList<AiMessage> messages, bool allowTools, Func<string, Task> onText, CancellationToken ct)
+        {
+            Seen.Add(messages.ToList());
+            var r = script(++Calls, messages, allowTools);
+            if (r.Text.Length > 0) await onText(r.Text);
+            return r;
+        }
+    }
+
+    private AssistantService Svc(IAiProvider p) => new(p,
+        new AssistantTools(app.Services.GetRequiredService<InventoryQueries>(), app.Services.GetRequiredService<OrderService>(),
+            app.Services.GetRequiredService<PurchasingService>(), TimeProvider.System),
+        new AssistantLimiter(TimeProvider.System, new ConfigurationBuilder().Build()));
+
+    [Fact]
+    public async Task AnyProvider_DrivesTheSameReadOnlyToolLoop()
+    {
+        var p = new ScriptedProvider((n, _, _) => n == 1
+            ? new AiResponse(AiStop.ToolUse, "", [new AiToolCall("c1", "list_low_stock", "{\"limit\":3}"), new AiToolCall("c2", "bogus_tool", "{}")])
+            : new AiResponse(AiStop.Done, "Answer.", []));
+        var res = await Svc(p).AskAsync("u", [], "low?", _ => Task.CompletedTask);
+        Assert.True(res.Ok);
+        Assert.Equal("Answer.", res.Text);
+        Assert.Equal(["list_low_stock", "bogus_tool"], res.Tools);
+        var results = p.Seen[1][^1].Results!;
+        Assert.False(results[0].IsError);
+        Assert.True(results[1].IsError); // unknown tool is rejected, never executed
+        Assert.Equal("c1", results[0].CallId);
+    }
+
+    [Fact]
+    public async Task ProviderErrors_AreFriendly()
+    {
+        var p = new ScriptedProvider((_, _, _) => throw new AiProviderException(429, "quota detail"));
+        var res = await Svc(p).AskAsync("u", [], "hi", _ => Task.CompletedTask);
+        Assert.False(res.Ok);
+        Assert.DoesNotContain("quota detail", res.Error);
+    }
+
+    [Theory]
+    [InlineData(null, "Gemini")]
+    [InlineData("", "Gemini")]
+    [InlineData("anthropic", "Anthropic")]
+    [InlineData("gemini", "Gemini")]
+    [InlineData("SomethingElse", "SomethingElse")]
+    public void ProviderSelection_FromConfig(string? configured, string expectedName)
+    {
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Ai:Provider"] = configured, ["Claude:ApiKey"] = "k", ["Ai:Gemini:ApiKey"] = "k" }).Build();
+        var p = AiProviderSelector.Create(cfg, new HttpClient());
+        Assert.Equal(expectedName, p.Name);
+        Assert.Equal(expectedName != "SomethingElse", p.Enabled); // unknown provider => disabled state
+    }
+}
+
+/// <summary>Gemini (free tier) provider against a scripted fake handler: native function calling, SSE streaming, thought-signature replay.</summary>
+public class GeminiProviderTests(MedStockFactory app) : IClassFixture<MedStockFactory>
+{
+    private static IConfiguration Cfg(string? key = "gem-key") =>
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Ai:Provider"] = "Gemini", ["Ai:Gemini:ApiKey"] = key }).Build();
+
+    private static HttpResponseMessage Sse(params string[] chunks) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(string.Concat(chunks.Select(c => "data: " + c + "\r\n\r\n")), Encoding.UTF8, "text/event-stream") };
+
+    private static string Chunk(string partsJson, string? finish = null) =>
+        "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":" + partsJson + "}" + (finish is null ? "" : ",\"finishReason\":\"" + finish + "\"") + "}]}";
+
+    private (AssistantService Svc, FakeClaude Fake) Make(Func<int, JsonObject, HttpResponseMessage> respond, IConfiguration? cfg = null)
+    {
+        cfg ??= Cfg();
+        var fake = new FakeClaude(respond);
+        var tools = new AssistantTools(app.Services.GetRequiredService<InventoryQueries>(), app.Services.GetRequiredService<OrderService>(),
+            app.Services.GetRequiredService<PurchasingService>(), TimeProvider.System);
+        return (new AssistantService(new GeminiProvider(new HttpClient(fake), cfg), tools, new AssistantLimiter(TimeProvider.System, cfg)), fake);
+    }
+
+    [Fact]
+    public async Task ToolLoop_FunctionCall_FunctionResponse_FinalText()
+    {
+        var (svc, fake) = Make((n, _) => n == 1
+            ? Sse(Chunk("[{\"functionCall\":{\"id\":\"f1\",\"name\":\"get_kpis\",\"args\":{}},\"thoughtSignature\":\"SIG123\"}]", "STOP"))
+            : Sse(Chunk("[{\"text\":\"There are \"}]"), Chunk("[{\"text\":\"12 SKUs.\"}]", "STOP")));
+        var events = new List<AssistantEvent>();
+        var res = await svc.AskAsync("g1", [], "How many SKUs?", e => { events.Add(e); return Task.CompletedTask; });
+
+        Assert.True(res.Ok);
+        Assert.Equal("There are 12 SKUs.", res.Text);
+        Assert.Equal(["get_kpis"], res.Tools);
+        Assert.Equal(["There are ", "12 SKUs."], events.Where(e => e.Kind == AssistantEventKind.Text).Select(e => e.Text));
+
+        Assert.Equal("gem-key", fake.Raw[0].Headers.GetValues("x-goog-api-key").Single());
+        Assert.Contains(":streamGenerateContent?alt=sse", fake.Raw[0].RequestUri!.ToString());
+        Assert.Contains("gemini", fake.Raw[0].RequestUri!.ToString());
+        var r1 = fake.Requests[0];
+        var decls = r1["tools"]![0]!["functionDeclarations"]!.AsArray();
+        Assert.Equal(AssistantTools.Names.Count, decls.Count);
+        Assert.DoesNotContain("additionalProperties", r1.ToJsonString());
+        Assert.Equal("AUTO", r1["toolConfig"]!["functionCallingConfig"]!["mode"]!.GetValue<string>());
+
+        // turn 2: the model's raw parts (with thought signature) are echoed, then the functionResponse follows as a user turn
+        var contents = fake.Requests[1]["contents"]!.AsArray();
+        Assert.Equal("model", contents[1]!["role"]!.GetValue<string>());
+        Assert.Equal("SIG123", contents[1]!["parts"]![0]!["thoughtSignature"]!.GetValue<string>());
+        var fr = contents[2]!["parts"]![0]!["functionResponse"]!;
+        Assert.Equal("user", contents[2]!["role"]!.GetValue<string>());
+        Assert.Equal("get_kpis", fr["name"]!.GetValue<string>());
+        Assert.Equal("f1", fr["id"]!.GetValue<string>());
+        Assert.NotNull(fr["response"]!["result"]!["inventory_value_usd"]);
+    }
+
+    [Fact]
+    public async Task IterationCap_SwitchesToolModeToNone()
+    {
+        var (svc, fake) = Make((_, body) => body["toolConfig"]!["functionCallingConfig"]!["mode"]!.GetValue<string>() == "AUTO"
+            ? Sse(Chunk("[{\"functionCall\":{\"name\":\"list_low_stock\",\"args\":{\"limit\":2}}}]"))
+            : Sse(Chunk("[{\"text\":\"Done.\"}]", "STOP")));
+        var res = await svc.AskAsync("g2", [], "loop", _ => Task.CompletedTask);
+        Assert.True(res.Ok);
+        Assert.Equal(AssistantService.MaxToolIterations + 1, fake.Requests.Count);
+        Assert.Equal("NONE", fake.Requests[^1]["toolConfig"]!["functionCallingConfig"]!["mode"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Disabled_WithoutKey_NeverCallsApi()
+    {
+        var (svc, fake) = Make((_, _) => throw new InvalidOperationException("no calls"), Cfg(null));
+        Assert.False(svc.Enabled);
+        var res = await svc.AskAsync("g3", [], "hi", _ => Task.CompletedTask);
+        Assert.False(res.Ok);
+        Assert.Empty(fake.Requests);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task HttpErrors_AreFriendly(HttpStatusCode code)
+    {
+        var (svc, _) = Make((_, _) => FakeClaude.Error(code));
+        var res = await svc.AskAsync("g4", [], "hi", _ => Task.CompletedTask);
+        Assert.False(res.Ok);
+        Assert.DoesNotContain("secret detail", res.Error);
+        Assert.DoesNotContain("gem-key", res.Error);
+    }
+
+    [Fact]
+    public async Task SafetyBlock_IsReportedAsRefusal_AndGeminiToolsStayReadOnly()
+    {
+        var (svc, _) = Make((_, _) => Sse(Chunk("[]", "SAFETY")));
+        var res = await svc.AskAsync("g5", [], "hi", _ => Task.CompletedTask);
+        Assert.False(res.Ok);
+        // Gemini only ever sees the same nine read-only tool declarations
+        Assert.All(AssistantTools.Definitions().Select(d => d!["name"]!.GetValue<string>()), n => Assert.Contains(n, AssistantTools.Names));
     }
 }

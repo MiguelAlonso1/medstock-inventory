@@ -2,14 +2,14 @@
 
 ## 1.3.0 - 2026-11-18
 
-"Ask MedStock": a Claude-powered, read-only agentic assistant.
+"Ask MedStock": a read-only agentic assistant on the Google Gemini free tier (or Claude).
 
 - New `/assistant` page (nav entry "Ask MedStock"): chat with a tool-use loop (max 6 tool rounds), streamed answers and small chips showing which tools were used. Nine read-only tools over the existing query services (`search_products`, `get_stock_by_product`, `list_expiring_lots`, `list_low_stock`, `get_order`, `list_open_orders`, `list_reorder_suggestions`, `list_alerts`, `get_kpis`) with validated inputs and row caps.
 - AI briefing card on the Overview: short daily operations briefing (expiring lots, low stock, cold-chain excursions, shortfalls).
-- Claude Messages API over `HttpClient` + `System.Text.Json` (no SDK, no new package), streaming, prompt caching for system prompt and tool definitions. Config: `Claude:ApiKey` (env `Claude__ApiKey`), `Claude:Model` (default `claude-haiku-5-5`), `Claude:DailyLimit` (200), `Claude:HourlyLimit` (20 per user).
+- Provider abstraction `IAiProvider` selected by `Ai:Provider` (`Gemini` default, `Anthropic`): Gemini native function calling over `HttpClient` + `System.Text.Json` with SSE streaming (`Ai:Gemini:ApiKey`, `Ai:Gemini:Model`, free key from Google AI Studio); Claude Messages API with prompt caching (`Claude:ApiKey`, `Claude:Model`). No SDK, no new package. `Claude:DailyLimit` (200) and `Claude:HourlyLimit` (20 per user) apply to both.
 - Limits: 500-character questions, last 10 turns, 90 s timeout, friendly errors. Without an API key the page and card show a disabled state; the rest of the app is unaffected.
-- CI/CD: the deploy job injects `Claude__ApiKey` into `web.config` only when the `ANTHROPIC_API_KEY` secret is non-empty.
-- Tests with a fake `HttpMessageHandler` (no live calls): tool-use loop, iteration cap, read-only guarantee (tables and ledger unchanged after running every tool), input validation, rate limit and daily cap, disabled state, page access.
+- CI/CD: the deploy job (never the build job, whose artifact is public) injects `Ai__Gemini__ApiKey` (secret `GEMINI_API_KEY`), `Claude__ApiKey` (secret `ANTHROPIC_API_KEY`) and `Ai__Provider` (variable `AI_PROVIDER`) into `web.config`, each only when non-empty.
+- Tests with fake `HttpMessageHandler`s for both providers (no live calls): tool-use loop, iteration cap, read-only guarantee (tables and ledger unchanged after running every tool), input validation, rate limit and daily cap, disabled state, page access.
 
 
 ## 1.2.0 - 2026-11-16

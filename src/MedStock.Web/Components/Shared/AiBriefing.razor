@@ -14,7 +14,7 @@
     </div>
     @if (!Ai.Enabled)
     {
-        <MudText Color="Color.Secondary">AI features need an API key. Set <code>Claude:ApiKey</code> to enable the daily operations briefing.</MudText>
+        <MudText Color="Color.Secondary">AI features need an API key. Set <code>Ai:Gemini:ApiKey</code> to enable the daily operations briefing.</MudText>
     }
     else if (_busy && _text.Length == 0)
     {
