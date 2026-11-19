@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.3 - 2026-11-19 - Test isolation from local AI keys
+
+- Tests: the test host now overrides `Ai:Provider`, `Ai:Gemini:ApiKey`, `Ai:Anthropic:ApiKey` and `Claude:ApiKey` in memory so a developer's user-secrets or environment variables never leak into tests.
+
 ## 1.3.2 - 2026-11-19 - Node 24 Actions, theme toggle fix
 
 - CI: updated GitHub Actions to Node 24 majors (`checkout` v7, `setup-dotnet` v6, `upload-artifact` v7, `download-artifact` v8). Deploy logic unchanged.

@@ -25,7 +25,12 @@ public sealed class MedStockFactory : WebApplicationFactory<Program>
         builder.ConfigureAppConfiguration((_, c) => c.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ConnectionStrings:Default"] = $"Data Source={_db}",
-            ["Simulation:Enabled"] = "false"
+            ["Simulation:Enabled"] = "false",
+            // Isolate from a developer's user-secrets / env vars: tests set a fake key explicitly when needed.
+            ["Ai:Provider"] = "Gemini",
+            ["Ai:Gemini:ApiKey"] = "",
+            ["Ai:Anthropic:ApiKey"] = "",
+            ["Claude:ApiKey"] = ""
         }));
     }
 
