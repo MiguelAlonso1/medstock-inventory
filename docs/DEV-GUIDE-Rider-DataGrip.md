@@ -81,7 +81,7 @@ Revert and push (CI redeploys the previous behaviour): *Git tool window (Alt+9) 
 | Name | Type | Meaning |
 |---|---|---|
 | `FTP_SERVER`, `FTP_USERNAME`, `FTP_PASSWORD` | secrets | FTPS login to the host |
-| `FTP_SERVER_DIR` | variable | site folder, exactly `pem-now/` (never `/`, `./`, empty or with `..`) |
+| `FTP_SERVER_DIR` | variable | site folder, exactly `inventory/` (never `/`, `./`, empty or with `..`) |
 | `DEPLOY_ENABLED` | variable | must be exactly `true` for the deploy job to run |
 | `SITE_URL` | variable | URL for the smoke test (optional; skipped when unset) |
 | `GEMINI_API_KEY` | secret, optional | Gemini key (free tier); injected as `Ai__Gemini__ApiKey` |
@@ -90,7 +90,7 @@ Revert and push (CI redeploys the previous behaviour): *Git tool window (Alt+9) 
 
 The AI values are written into the published `web.config` **only in the deploy job**, only when non-empty. Re-run the workflow after changing a secret. The deploy job uses the `production` environment (secrets can be repo- or environment-level; be consistent).
 
-**`clean_target`** (workflow_dispatch input): mirrors with `--delete` to remove stale server files, keeping `App_Data`, `.well-known` and logs. Allowed only when `FTP_SERVER_DIR` is exactly `pem-now/`. Use it only for a first deploy over a retired app.
+**`clean_target`** (workflow_dispatch input): mirrors with `--delete` to remove stale server files, keeping `App_Data`, `.well-known` and logs. Allowed only when `FTP_SERVER_DIR` is exactly `inventory/`. Use it only for a first deploy over a retired app.
 
 ---
 
@@ -162,7 +162,7 @@ Free key: https://aistudio.google.com/apikey (rate-limited; only synthetic demo 
 |---|---|
 | Deploy: `lftp could not connect/login` or FTP `530` | FTP secrets wrong or password changed. Re-set with `gh secret set`, re-run. |
 | `ECONNRESET` / data socket error | Transient FTPS TLS issue. Re-run the failed job. |
-| `FTP_SERVER_DIR is unset or unsafe` | Variable empty or `/`, `./`. Set it to `pem-now/`. |
+| `FTP_SERVER_DIR is unset or unsafe` | Variable empty or `/`, `./`. Set it to `inventory/`. |
 | `clean_target is only allowed when ...` | Wrong folder; untick it. |
 | 503 "Updating, back in a minute." after the run | `app_offline.htm` left on the server. Re-run the failed job (cleanup retries) or delete the file over FTPS. |
 | HTTP 500.30 / 502.5 after deploy | App failed to start: enable `stdoutLogEnabled="true"` temporarily in the server `web.config`, read the log, turn it off (the next deploy overwrites it). Usual causes: bad setting, DB schema mismatch. |
