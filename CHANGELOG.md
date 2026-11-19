@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1 - 2026-11-19 - User secrets for local AI keys
+
+- Added a `UserSecretsId` to the web project so `dotnet user-secrets set` works (secrets load automatically in Development).
+- README and Rider/DataGrip guide: corrected local AI-key instructions (exact config keys, user secrets, or an `Ai__Gemini__ApiKey` environment variable in a Rider run configuration).
+
 ## 1.3.0 - 2026-11-18
 
 "Ask MedStock": a read-only agentic assistant on the Google Gemini free tier (or Claude).

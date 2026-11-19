@@ -61,7 +61,18 @@ Configuration:
 | `Claude:ApiKey` (env `Claude__ApiKey`), `Claude:Model` | none, `claude-haiku-5-5` | only when `Ai:Provider=Anthropic` (paid; prompt caching on tools and system prompt) |
 | `Claude:DailyLimit` / `Claude:HourlyLimit` | 200 / 20 | questions per UTC day (all users) / per user per hour, both providers |
 
-Locally: `dotnet user-secrets set Ai:Gemini:ApiKey <key> --project src/MedStock.Web` or set `Ai__Gemini__ApiKey` before `dotnet run`. In production set the repository secret (and, to switch provider, the repository variable `AI_PROVIDER`) and deploy:
+Locally (Development), store the key in .NET user secrets (the web project has a `UserSecretsId`; secrets load automatically in Development and stay outside the repo):
+
+```
+dotnet user-secrets set "Ai:Gemini:ApiKey" "<your key>" --project src/MedStock.Web/MedStock.Web.csproj
+# optional, to use Claude instead:
+dotnet user-secrets set "Ai:Provider" "Anthropic" --project src/MedStock.Web/MedStock.Web.csproj
+dotnet user-secrets set "Claude:ApiKey" "<your key>" --project src/MedStock.Web/MedStock.Web.csproj
+```
+
+Alternatively set an environment variable (double underscore = `:`), for example `Ai__Gemini__ApiKey` in a Rider run configuration (Edit Configurations -> Environment variables; untick "Share through VCS"), or `$env:Ai__Gemini__ApiKey="..."` before `dotnet run`.
+
+In production set the repository secret (and, to switch provider, the repository variable `AI_PROVIDER`) and deploy:
 
 ```
 gh secret set GEMINI_API_KEY -R MiguelAlonso1/medstock-inventory

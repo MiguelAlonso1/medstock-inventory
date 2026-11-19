@@ -13,7 +13,7 @@ Audience: maintainer (senior .NET dev). Tools: JetBrains Rider + DataGrip, GitHu
 | Local DB | `src/MedStock.Web/App_Data/medstock.db` (SQLite, created and seeded on first run) |
 | Health endpoint | `/health` |
 | Workflow | `.github/workflows/ci-cd.yml` |
-| Version | 1.3.0 (`<Version>` in the web csproj) |
+| Version | 1.3.1 (`<Version>` in the web csproj) |
 | AI feature | Ask MedStock |
 
 Demo logins (public on purpose, synthetic data, also in the README): `admin@medstock.demo`, `manager@medstock.demo`, `picker@medstock.demo`, `viewer@medstock.demo`, password `MedStock-Demo-2026!`.
@@ -118,7 +118,7 @@ Run `claude` in Rider's Terminal (Alt+F12) at the repo root; it reads `CLAUDE.md
 
 ---
 
-## 8. AI features (Ask MedStock, v1.3.0)
+## 8. AI features (Ask MedStock, v1.3.1)
 
 Default provider is **Google Gemini free tier** (`gemini-3.5-flash-lite`); Claude is optional and paid (`claude-haiku-5-5`). Both use plain `HttpClient` (no SDK). Without a key for the selected provider the feature shows a disabled state and nothing else is affected.
 
@@ -137,7 +137,12 @@ In the app: nav entry **Ask MedStock** (`/assistant`, any signed-in role), a rea
 Set the `GEMINI_API_KEY` secret (and optionally the `AI_PROVIDER` variable or `ANTHROPIC_API_KEY`) as in section 5, then redeploy.
 
 ### Run it locally
-The project has **no `UserSecretsId`**, so `dotnet user-secrets set` does not work (the README mentions it; use an environment variable instead):
+The project has a `UserSecretsId`, so **user secrets work** and load automatically in Development (recommended; nothing to commit):
+```powershell
+dotnet user-secrets set "Ai:Gemini:ApiKey" "<your key>" --project src/MedStock.Web/MedStock.Web.csproj
+# Claude: set "Ai:Provider" "Anthropic" and "Claude:ApiKey"
+```
+Alternative, an environment variable in a Rider run configuration:
 1. Rider: run-config dropdown -> **Edit Configurations...** -> the web project's `http` profile.
 2. **Environment variables**: add `Ai__Gemini__ApiKey` = your key (double underscore = `:`). Optionally `Ai__Provider` and `Claude__ApiKey`.
 3. Run. Do not commit the run configuration if it contains the key (untick "Share through VCS").
