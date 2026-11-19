@@ -154,6 +154,16 @@ public class AuthTests(MedStockFactory app)
         Assert.Equal("/", res.Headers.Location?.OriginalString);
         Assert.Contains(res.Headers.GetValues("Set-Cookie"), c => c.StartsWith("theme=light"));
     }
+
+    [Fact]
+    public async Task ThemeToggle_IsPlainLinkOutsideBlazorNavigation()
+    {
+        var html = await (await app.NewClient().GetAsync("/login")).Content.ReadAsStringAsync();
+        var i = html.IndexOf("theme/", StringComparison.Ordinal);
+        Assert.True(i > 0);
+        var tag = html[html.LastIndexOf('<', i)..html.IndexOf('>', i)];
+        Assert.Contains("target=\"_top\"", tag);
+    }
 }
 
 [Collection("app")]

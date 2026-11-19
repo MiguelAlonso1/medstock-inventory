@@ -36,7 +36,7 @@
             </NotAuthorized>
         </AuthorizeView>
         <MudTooltip Text="@(_isDark ? "Switch to light theme" : "Switch to dark theme")">
-            <MudIconButton Icon="@(_isDark ? Icons.Material.Rounded.LightMode : Icons.Material.Rounded.DarkMode)" Color="Color.Inherit" Href="@ThemeHref"
+            <MudIconButton Icon="@(_isDark ? Icons.Material.Rounded.LightMode : Icons.Material.Rounded.DarkMode)" Color="Color.Inherit" Href="@ThemeHref" Target="_top"
                            data-enhance-nav="false" Class="ml-1" aria-label="@(_isDark ? "Switch to light theme" : "Switch to dark theme")" />
         </MudTooltip>
     </MudAppBar>

@@ -66,7 +66,7 @@
                 <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-3 d-block">Demo accounts use <code>@DemoUsers.Password</code> (e.g. viewer@medstock.demo).</MudText>
             </form>
             <div class="d-flex justify-center mt-4">
-                <MudButton Href="@ThemeHref" Size="Size.Small" Color="Color.Default" StartIcon="@(_dark ? Icons.Material.Rounded.LightMode : Icons.Material.Rounded.DarkMode)" data-enhance-nav="false">
+                <MudButton Href="@ThemeHref" Target="_top" Size="Size.Small" Color="Color.Default" StartIcon="@(_dark ? Icons.Material.Rounded.LightMode : Icons.Material.Rounded.DarkMode)" data-enhance-nav="false">
                     @(_dark ? "Light theme" : "Dark theme")
                 </MudButton>
             </div>

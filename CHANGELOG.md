@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.2 - 2026-11-19 - Node 24 Actions, theme toggle fix
+
+- CI: updated GitHub Actions to Node 24 majors (`checkout` v7, `setup-dotnet` v6, `upload-artifact` v7, `download-artifact` v8). Deploy logic unchanged.
+- Theme toggle (header and login page) now opens with `target="_top"` so Blazor no longer intercepts the click and performs a JS-interop forced navigation that raised `TaskCanceledException` in the circuit log; the browser follows the `/theme/{mode}` link normally.
+
 ## 1.3.1 - 2026-11-19 - User secrets for local AI keys
 
 - Added a `UserSecretsId` to the web project so `dotnet user-secrets set` works (secrets load automatically in Development).
