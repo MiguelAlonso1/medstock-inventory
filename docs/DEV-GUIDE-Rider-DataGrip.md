@@ -165,7 +165,7 @@ Free key: https://aistudio.google.com/apikey (rate-limited; only synthetic demo 
 | `FTP_SERVER_DIR is unset or unsafe` | Variable empty or `/`, `./`. Set it to `inventory/`. |
 | `clean_target is only allowed when ...` | Wrong folder; untick it. |
 | 503 "Updating, back in a minute." after the run | `app_offline.htm` left on the server. Re-run the failed job (cleanup retries) or delete the file over FTPS. |
-| HTTP 500.30 / 502.5 after deploy | App failed to start: enable `stdoutLogEnabled="true"` temporarily in the server `web.config`, read the log, turn it off (the next deploy overwrites it). Usual causes: bad setting, DB schema mismatch. |
+| HTTP 500.30 / 502.5 after deploy | App failed to start: temporarily set `stdoutLogEnabled="true"` in `web.config` and redeploy, read `logsstdout*`, then set it back to false and redeploy. Usual causes: bad setting, DB schema mismatch. |
 | Smoke test fails but site is up | Host warm-up, or `SITE_URL` points at a hostname not live yet. Re-run. |
 | CI fails with build warnings | Zero-warnings rule. `dotnet build -c Release` locally and fix each warning. |
 | CI test fails, passes locally | CI is Linux (case-sensitive paths); check culture/time-zone assumptions. |

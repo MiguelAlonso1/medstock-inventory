@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.4 - 2026-11-19 - Stdout logging off
+
+- web.config: `stdoutLogEnabled="false"` now that the app is healthy (it was only for first-deploy diagnosis and made log files accumulate on the shared host). To diagnose startup failures, temporarily set `stdoutLogEnabled="true"` and redeploy. Existing files in the server `logs\` folder are not removed and can be deleted later.
+
 ## 1.3.3 - 2026-11-19 - Test isolation from local AI keys
 
 - Tests: the test host now overrides `Ai:Provider`, `Ai:Gemini:ApiKey`, `Ai:Anthropic:ApiKey` and `Claude:ApiKey` in memory so a developer's user-secrets or environment variables never leak into tests.
