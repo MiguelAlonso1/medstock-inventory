@@ -143,9 +143,9 @@ Settings (`appsettings.json`): `Simulation:Enabled`, `Simulation:IntervalSeconds
 
 Target: Windows/IIS shared hosting, deployed over FTPS by `.github/workflows/ci-cd.yml` (same safety design as the portfolio site: target-folder validation, write probe, `app_offline.htm`, `mirror -R` without `--delete`, always-run cleanup, smoke test, concurrency).
 
-1. Repo **variables**: `FTP_SERVER_DIR` (site folder, e.g. `inventory/`), `SITE_URL` (optional, default `http://inventory.alonsomiguel.com`), `DEPLOY_ENABLED=true` to turn deploys on. **Secrets**: `FTP_SERVER`, `FTP_USERNAME`, `FTP_PASSWORD`.
+1. Repo **variables**: `FTP_SERVER_DIR` (site folder, e.g. `inventory/`), `SITE_URL` (optional, default `https://inventory.alonsomiguel.com`), `DEPLOY_ENABLED=true` to turn deploys on. **Secrets**: `FTP_SERVER`, `FTP_USERNAME`, `FTP_PASSWORD`.
 2. The workflow publishes self-contained `win-x86` (the host may not offer .NET 11); `web.config` is out-of-process with WebSockets enabled. Enable the WebSocket Protocol feature in the hosting panel.
-3. Smoke test: `http://inventory.alonsomiguel.com/health`.
+3. Smoke test: `https://inventory.alonsomiguel.com/health` and the http-to-https redirect.
 4. **Database**: SQLite is created and seeded on first start in `App_Data/`. The folder must be writable by the app pool. `App_Data/*.db*` is excluded from the publish output and from the FTP mirror, so later deployments never overwrite live data. The schema is created with `EnsureCreated` (no migrations); its version is stored in SQLite's `user_version`. When a release changes the schema (`DemoSeeder.SchemaVersion`), the first start logs a warning, drops and recreates the demo database and reseeds it (demo users are recreated too), so an existing `App_Data` upgrades by itself.
 5. Concurrent users share one simulator and one database; this is intentionally a single-instance demo.
 

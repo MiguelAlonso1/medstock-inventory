@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.5 - 2026-11-19 - HTTPS redirect and HSTS enabled
+
+- `appsettings.Production.json` sets `Https:Enforce=true` (Development and tests stay on HTTP): plain-HTTP requests get a 301 to https, except `/.well-known/acme-challenge/` (Let's Encrypt renewals). HSTS is sent with a 30-day max-age, no includeSubDomains.
+- CI smoke test also checks that `http://<host>/` redirects to https. `SITE_URL` is now https; docs updated.
+
 ## 1.3.4 - 2026-11-19 - Stdout logging off
 
 - web.config: `stdoutLogEnabled="false"` now that the app is healthy (it was only for first-deploy diagnosis and made log files accumulate on the shared host). To diagnose startup failures, temporarily set `stdoutLogEnabled="true"` and redeploy. Existing files in the server `logs\` folder are not removed and can be deleted later.

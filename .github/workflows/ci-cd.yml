@@ -209,3 +209,13 @@ jobs:
             done
             if [ -z "$ok" ]; then echo "::error::Smoke test failed for $path"; exit 1; fi
           done
+          case "$BASE" in
+            https://*)
+              host="${BASE#https://}"; host="${host%%/*}"
+              read -r code loc < <(curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' --max-time 20 "http://$host/" || echo "000 ")
+              echo "http://$host/ -> $code $loc"
+              case "$code:$loc" in
+                301:https://*|308:https://*) ;;
+                *) echo "::error::http://$host/ does not redirect to https"; exit 1;;
+              esac;;
+          esac
